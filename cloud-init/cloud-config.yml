@@ -1,6 +1,6 @@
 #cloud-config
 # ---------------------------------------------------------------------------
-# forge-lite cloud-init — Ubuntu 22.04 server provisioning
+# forge-lite cloud-init — Ubuntu 24.04 server provisioning
 # ---------------------------------------------------------------------------
 # Paste this as "User Data" when creating a new server at your cloud provider
 # (Hetzner, DigitalOcean, AWS EC2, Vultr, Linode, etc.).

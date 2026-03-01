@@ -62,7 +62,7 @@ export FORGE_LITE_PHP_DEFAULT FORGE_LITE_DB_PASSWORD FORGE_LITE_REDIS_PASSWORD F
 # Pre-flight checks
 # ---------------------------------------------------------------------------
 require_root
-require_ubuntu "22.04"
+require_ubuntu "24.04"
 
 MARKER="/root/.forge-lite-provisioned"
 if [[ -f "$MARKER" ]] && [[ "$FORCE" != true ]]; then

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-forge-lite is a modular, bash-based server provisioning and deployment system for Laravel projects. It targets Ubuntu 22.04 and serves as a lightweight alternative to Laravel Forge.
+forge-lite is a modular, bash-based server provisioning and deployment system for Laravel projects. It targets Ubuntu 24.04 and serves as a lightweight alternative to Laravel Forge.
 
 ## Architecture
 

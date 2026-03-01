@@ -42,7 +42,7 @@ require_root() {
 }
 
 require_ubuntu() {
-    local required_version="${1:-22.04}"
+    local required_version="${1:-24.04}"
     [[ -f /etc/os-release ]] || die "Cannot detect OS — /etc/os-release missing."
     # shellcheck disable=SC1091
     source /etc/os-release

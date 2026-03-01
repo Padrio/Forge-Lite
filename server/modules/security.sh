@@ -51,24 +51,26 @@ provision_security() {
 bantime  = 3600
 findtime = 600
 maxretry = 5
+backend  = systemd
 
 [sshd]
 enabled = true
 port    = ssh
 filter  = sshd
-logpath = /var/log/auth.log
 
 [nginx-http-auth]
 enabled  = true
 port     = http,https
 filter   = nginx-http-auth
 logpath  = /var/log/nginx/error.log
+backend  = auto
 
 [nginx-botsearch]
 enabled  = true
 port     = http,https
 filter   = nginx-botsearch
 logpath  = /var/log/nginx/access.log
+backend  = auto
 F2B
         ensure_service fail2ban restart
         log_ok "Fail2Ban configured (sshd + nginx jails)"

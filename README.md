@@ -1,6 +1,6 @@
 # forge-lite
 
-A lightweight, bash-based server provisioning and deployment system for Laravel projects. A self-hosted alternative to Laravel Forge, targeting Ubuntu 22.04.
+A lightweight, bash-based server provisioning and deployment system for Laravel projects. A self-hosted alternative to Laravel Forge, targeting Ubuntu 24.04.
 
 ## Features
 
@@ -13,7 +13,7 @@ A lightweight, bash-based server provisioning and deployment system for Laravel 
 
 ## Prerequisites
 
-- Fresh Ubuntu 22.04 server
+- Fresh Ubuntu 24.04 server
 - Root access (or sudo)
 - SSH key-based access configured
 
