@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# forge-lite CLI: forge-lite-db — Database management (create|drop|list|backup|restore)
+set -euo pipefail
+
+CREDENTIALS_FILE="/root/.forge-lite-credentials"
+
+# Minimal helpers
+log_info()  { echo "[INFO]  $*" >&2; }
+log_ok()    { echo "[OK]    $*" >&2; }
+log_error() { echo "[ERROR] $*" >&2; }
+die() { log_error "$@"; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
+
+# Read MariaDB root password
+get_credential() {
+    local key="$1"
+    [[ -f "$CREDENTIALS_FILE" ]] || die "Credentials file not found: ${CREDENTIALS_FILE}"
+    local line
+    line=$(grep "^${key}=" "$CREDENTIALS_FILE") || die "Credential '${key}' not found."
+    echo "${line#*=}"
+}
+
+store_credential() {
+    local key="$1" value="$2"
+    if grep -q "^${key}=" "$CREDENTIALS_FILE" 2>/dev/null; then
+        return 0
+    fi
+    echo "${key}=${value}" >> "$CREDENTIALS_FILE"
+}
+
+generate_password() {
+    openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c "${1:-32}"
+}
+
+ROOT_PASS=$(get_credential "MARIADB_ROOT_PASSWORD")
+MYSQL_CMD="mysql -u root -p${ROOT_PASS}"
+
+usage() {
+    cat <<'USAGE'
+Usage: forge-lite-db <command> [args]
+
+Commands:
+    create <name>           Create database + user with auto-generated password
+    drop <name> [--yes]     Drop database and user
+    list                    List all databases
+    backup <name> [path]    Dump database to file (default: /home/deployer/backups/)
+    restore <name> <file>   Restore database from SQL dump
+USAGE
+    exit 0
+}
+
+cmd_create() {
+    local name="$1"
+    [[ -n "$name" ]] || die "Database name required."
+    local safe_name
+    safe_name=$(echo "$name" | tr '.-' '_' | tr -cd 'a-zA-Z0-9_')
+
+    local db_pass
+    db_pass=$(generate_password 32)
+
+    $MYSQL_CMD -e "CREATE DATABASE IF NOT EXISTS \`${safe_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    $MYSQL_CMD -e "CREATE USER IF NOT EXISTS '${safe_name}'@'localhost' IDENTIFIED BY '${db_pass}';"
+    $MYSQL_CMD -e "GRANT ALL PRIVILEGES ON \`${safe_name}\`.* TO '${safe_name}'@'localhost';"
+    $MYSQL_CMD -e "FLUSH PRIVILEGES;"
+
+    store_credential "DB_${safe_name}_PASSWORD" "$db_pass"
+
+    log_ok "Database '${safe_name}' created"
+    log_info "User: ${safe_name}"
+    log_info "Password: ${db_pass}"
+    log_info "Credentials stored in ${CREDENTIALS_FILE}"
+}
+
+cmd_drop() {
+    local name="$1"
+    local confirm="${2:-}"
+    [[ -n "$name" ]] || die "Database name required."
+    local safe_name
+    safe_name=$(echo "$name" | tr '.-' '_' | tr -cd 'a-zA-Z0-9_')
+
+    if [[ "$confirm" != "--yes" ]]; then
+        read -rp "Drop database '${safe_name}' and user? [y/N] " answer
+        [[ "$answer" =~ ^[Yy]$ ]] || { log_info "Aborted."; exit 0; }
+    fi
+
+    $MYSQL_CMD -e "DROP DATABASE IF EXISTS \`${safe_name}\`;"
+    $MYSQL_CMD -e "DROP USER IF EXISTS '${safe_name}'@'localhost';"
+    $MYSQL_CMD -e "FLUSH PRIVILEGES;"
+
+    log_ok "Database '${safe_name}' and user dropped"
+}
+
+cmd_list() {
+    $MYSQL_CMD -e "SHOW DATABASES;" | tail -n +2 | grep -vE '^(information_schema|performance_schema|mysql|sys)$'
+}
+
+cmd_backup() {
+    local name="$1"
+    [[ -n "$name" ]] || die "Database name required."
+    local safe_name
+    safe_name=$(echo "$name" | tr '.-' '_' | tr -cd 'a-zA-Z0-9_')
+
+    local backup_dir="${2:-/home/deployer/backups}"
+    mkdir -p "$backup_dir"
+
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_file="${backup_dir}/${safe_name}_${timestamp}.sql.gz"
+
+    mysqldump -u root -p"${ROOT_PASS}" "$safe_name" | gzip > "$backup_file"
+    chown deployer:deployer "$backup_file" 2>/dev/null || true
+
+    log_ok "Backup saved to ${backup_file}"
+}
+
+cmd_restore() {
+    local name="$1"
+    local file="$2"
+    [[ -n "$name" ]] || die "Database name required."
+    [[ -n "$file" ]] || die "Backup file required."
+    [[ -f "$file" ]] || die "File not found: ${file}"
+
+    local safe_name
+    safe_name=$(echo "$name" | tr '.-' '_' | tr -cd 'a-zA-Z0-9_')
+
+    if [[ "$file" == *.gz ]]; then
+        gunzip -c "$file" | $MYSQL_CMD "$safe_name"
+    else
+        $MYSQL_CMD "$safe_name" < "$file"
+    fi
+
+    log_ok "Database '${safe_name}' restored from ${file}"
+}
+
+# Main dispatch
+[[ $# -ge 1 ]] || usage
+
+case "$1" in
+    create)  cmd_create "${2:-}" ;;
+    drop)    cmd_drop "${2:-}" "${3:-}" ;;
+    list)    cmd_list ;;
+    backup)  cmd_backup "${2:-}" "${3:-}" ;;
+    restore) cmd_restore "${2:-}" "${3:-}" ;;
+    -h|--help) usage ;;
+    *)       die "Unknown command: $1. Run with --help for usage." ;;
+esac

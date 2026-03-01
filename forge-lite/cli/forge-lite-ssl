@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# forge-lite CLI: forge-lite-ssl — SSL certificate management
+set -euo pipefail
+
+log_info()  { echo "[INFO]  $*" >&2; }
+log_ok()    { echo "[OK]    $*" >&2; }
+log_warn()  { echo "[WARN]  $*" >&2; }
+log_error() { echo "[ERROR] $*" >&2; }
+die() { log_error "$@"; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
+
+usage() {
+    cat <<'USAGE'
+Usage: forge-lite-ssl <command> <domain>
+
+Commands:
+    issue <domain>    Obtain SSL certificate via Let's Encrypt
+    renew <domain>    Force-renew certificate for domain
+    status <domain>   Show certificate status and expiry
+USAGE
+    exit 0
+}
+
+FORGE_LITE_TEMPLATES="/opt/forge-lite/server/config/templates"
+# Try to find templates relative to script location as fallback
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -d "${SCRIPT_DIR}/../server/config/templates" ]]; then
+    FORGE_LITE_TEMPLATES="${SCRIPT_DIR}/../server/config/templates"
+fi
+
+cmd_issue() {
+    local domain="$1"
+    [[ -n "$domain" ]] || die "Domain required."
+
+    # Check DNS resolution
+    if ! host "$domain" &>/dev/null; then
+        log_warn "DNS for '${domain}' may not be configured. Certbot might fail."
+    fi
+
+    # Issue certificate
+    log_info "Requesting SSL certificate for ${domain}..."
+    certbot certonly --nginx \
+        -d "$domain" \
+        --non-interactive \
+        --agree-tos \
+        --register-unsafely-without-email \
+        --redirect
+
+    # Switch nginx vhost to SSL variant if site config exists
+    local site_conf="/etc/forge-lite/${domain}.conf"
+    if [[ -f "$site_conf" ]]; then
+        # Read PHP version from site config
+        local php_version
+        # shellcheck disable=SC1090
+        source "$site_conf"
+        php_version="${PHP_VERSION:-8.3}"
+        local fpm_socket="/var/run/php/php${php_version}-${domain}-fpm.sock"
+
+        if [[ -f "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" ]]; then
+            # Simple sed-based template rendering
+            sed -e "s|{{DOMAIN}}|${domain}|g" \
+                -e "s|{{FPM_SOCKET}}|${fpm_socket}|g" \
+                "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" \
+                > "/etc/nginx/sites-available/${domain}.conf"
+
+            nginx -t && systemctl reload nginx
+            log_ok "NGINX vhost updated to SSL for ${domain}"
+        fi
+
+        # Update site config
+        if ! grep -q "^SSL=true" "$site_conf" 2>/dev/null; then
+            echo "SSL=true" >> "$site_conf"
+        fi
+    fi
+
+    log_ok "SSL certificate issued for ${domain}"
+}
+
+cmd_renew() {
+    local domain="$1"
+    [[ -n "$domain" ]] || die "Domain required."
+
+    log_info "Renewing SSL certificate for ${domain}..."
+    certbot renew --cert-name "$domain" --force-renewal
+    systemctl reload nginx 2>/dev/null || true
+
+    log_ok "SSL certificate renewed for ${domain}"
+}
+
+cmd_status() {
+    local domain="$1"
+    [[ -n "$domain" ]] || die "Domain required."
+
+    local cert_dir="/etc/letsencrypt/live/${domain}"
+    if [[ ! -d "$cert_dir" ]]; then
+        log_error "No certificate found for ${domain}"
+        exit 1
+    fi
+
+    echo "Certificate: ${cert_dir}/fullchain.pem"
+    echo ""
+    openssl x509 -in "${cert_dir}/fullchain.pem" -noout \
+        -subject -issuer -dates -fingerprint
+}
+
+# Main dispatch
+[[ $# -ge 1 ]] || usage
+
+case "$1" in
+    issue)  cmd_issue "${2:-}" ;;
+    renew)  cmd_renew "${2:-}" ;;
+    status) cmd_status "${2:-}" ;;
+    -h|--help) usage ;;
+    *)      die "Unknown command: $1. Run with --help for usage." ;;
+esac

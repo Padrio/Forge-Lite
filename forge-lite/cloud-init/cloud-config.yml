@@ -1,0 +1,64 @@
+#cloud-config
+# ---------------------------------------------------------------------------
+# forge-lite cloud-init — Ubuntu 22.04 server provisioning
+# ---------------------------------------------------------------------------
+# Paste this as "User Data" when creating a new server at your cloud provider
+# (Hetzner, DigitalOcean, AWS EC2, Vultr, Linode, etc.).
+#
+# The script will:
+#   1. Update & upgrade all system packages
+#   2. Clone forge-lite from GitHub
+#   3. Run the full provisioning (NGINX, PHP, MariaDB, Redis, Node.js, …)
+#   4. Log everything to /var/log/forge-lite-cloud-init.log
+#
+# Adjust the variables in the runcmd section below to match your setup.
+# ---------------------------------------------------------------------------
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - git
+
+runcmd:
+  - |
+    # -----------------------------------------------------------------------
+    # CONFIGURATION — edit these variables to match your setup
+    # -----------------------------------------------------------------------
+    FORGE_LITE_REPO="https://github.com/your-org/forge-lite.git"  # your repo URL
+    FORGE_LITE_BRANCH="main"
+    PHP_DEFAULT="8.3"         # 8.1 | 8.2 | 8.3 | 8.4
+    DB_PASSWORD=""             # leave empty to auto-generate
+    REDIS_PASSWORD=""          # leave empty to auto-generate
+    NODE_VERSION="20"          # Node.js major version
+    SKIP_REBOOT="false"        # set to "true" to prevent automatic reboot
+    # -----------------------------------------------------------------------
+
+    LOG="/var/log/forge-lite-cloud-init.log"
+    exec > >(tee -a "$LOG") 2>&1
+    echo "=== forge-lite cloud-init started at $(date -Iseconds) ==="
+
+    # Clone repository
+    if [ -d /opt/forge-lite ]; then
+        echo ">>> /opt/forge-lite already exists, pulling latest changes..."
+        git -C /opt/forge-lite fetch origin "$FORGE_LITE_BRANCH"
+        git -C /opt/forge-lite reset --hard "origin/$FORGE_LITE_BRANCH"
+    else
+        echo ">>> Cloning forge-lite from ${FORGE_LITE_REPO} (branch: ${FORGE_LITE_BRANCH})..."
+        git clone --branch "$FORGE_LITE_BRANCH" "$FORGE_LITE_REPO" /opt/forge-lite
+    fi
+
+    # Build provision.sh arguments
+    ARGS=()
+    ARGS+=("--php-default=${PHP_DEFAULT}")
+    ARGS+=("--node-version=${NODE_VERSION}")
+    [ -n "$DB_PASSWORD" ]    && ARGS+=("--db-password=${DB_PASSWORD}")
+    [ -n "$REDIS_PASSWORD" ] && ARGS+=("--redis-password=${REDIS_PASSWORD}")
+    [ "$SKIP_REBOOT" = "true" ] && ARGS+=("--skip-reboot")
+
+    echo ">>> Running provision.sh ${ARGS[*]}"
+    bash /opt/forge-lite/server/provision.sh "${ARGS[@]}"
+
+    echo "=== forge-lite cloud-init finished at $(date -Iseconds) ==="
+
+final_message: "forge-lite cloud-init complete — system up for $UPTIME seconds"

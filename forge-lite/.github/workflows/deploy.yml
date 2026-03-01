@@ -1,0 +1,103 @@
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      domain:
+        required: true
+        type: string
+      branch:
+        required: false
+        type: string
+        default: ''
+    secrets:
+      SSH_PRIVATE_KEY:
+        required: true
+      SSH_HOST:
+        required: true
+      SSH_USER:
+        required: true
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, xml, bcmath, curl
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build frontend assets
+        run: npm run build
+
+      - name: Create deployment artifact
+        run: |
+          tar -czf /tmp/deploy-artifact.tar.gz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='tests' \
+            --exclude='.github' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='storage/logs/*' \
+            --exclude='storage/framework/cache/*' \
+            --exclude='storage/framework/sessions/*' \
+            --exclude='storage/framework/views/*' \
+            -C "${{ github.workspace }}" .
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload artifact to server
+        run: |
+          scp -i ~/.ssh/deploy_key \
+            /tmp/deploy-artifact.tar.gz \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/tmp/deploy-artifact.tar.gz"
+
+      - name: Execute deployment
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "sudo /opt/forge-lite/deploy/deploy.sh ${{ inputs.domain }} --artifact=/tmp/deploy-artifact.tar.gz"
+
+      - name: Cleanup remote artifact
+        if: always()
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "rm -f /tmp/deploy-artifact.tar.gz" 2>/dev/null || true
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
