@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+# forge-lite CLI — Unified entry point for forge-lite server management
+set -euo pipefail
+
+# Minimal helpers (self-contained, same pattern as forge-lite-db)
+log_info()  { echo "[INFO]  $*" >&2; }
+log_ok()    { echo "[OK]    $*" >&2; }
+log_warn()  { echo "[WARN]  $*" >&2; }
+log_error() { echo "[ERROR] $*" >&2; }
+die() { log_error "$@"; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
+
+# Resolve FORGE_LITE_DIR from script location, fallback to /opt/forge-lite
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -d "${SCRIPT_DIR}/../server" ]]; then
+    FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+else
+    FORGE_LITE_DIR="/opt/forge-lite"
+fi
+
+SITE_CONFIG_DIR="/etc/forge-lite"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# Upsert KEY=VALUE in a config file (grep+sed pattern from forge-lite-env)
+config_upsert() {
+    local file="$1" key="$2" value="$3"
+    if grep -q "^${key}=" "$file" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+    else
+        echo "${key}=${value}" >> "$file"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Usage
+# ---------------------------------------------------------------------------
+usage() {
+    cat <<'USAGE'
+Usage: forge-lite <command> [args]
+
+Commands:
+    site add [flags]                  Add a new site
+    site remove <domain> [flags]      Remove a site
+    site list                         List all configured sites
+
+    deploy <domain> [flags]           Deploy a site
+    deploy setup <domain> [flags]     Configure repo-based deployments
+    rollback <domain>                 Rollback to previous release
+
+    db <subcommand> [args]            Database management
+    env <subcommand> [args]           .env variable management
+    ssl <subcommand> [args]           SSL certificate management
+    php <version>                     Switch default PHP version
+    provision [flags]                 Provision the server
+
+Run 'forge-lite <command> --help' for command-specific help.
+USAGE
+    exit 0
+}
+
+# ---------------------------------------------------------------------------
+# site commands
+# ---------------------------------------------------------------------------
+cmd_site() {
+    [[ $# -ge 1 ]] || die "Usage: forge-lite site <add|remove|list> [args]"
+    local sub="$1"; shift
+
+    case "$sub" in
+        add)
+            exec "${FORGE_LITE_DIR}/sites/add-site.sh" "$@"
+            ;;
+        remove)
+            exec "${FORGE_LITE_DIR}/sites/remove-site.sh" "$@"
+            ;;
+        list)
+            cmd_site_list
+            ;;
+        -h|--help)
+            echo "Usage: forge-lite site <add|remove|list> [args]"
+            exit 0
+            ;;
+        *)
+            die "Unknown site command: $sub. Use add, remove, or list."
+            ;;
+    esac
+}
+
+cmd_site_list() {
+    if [[ ! -d "$SITE_CONFIG_DIR" ]] || ! ls "${SITE_CONFIG_DIR}"/*.conf &>/dev/null; then
+        log_info "No sites configured."
+        return 0
+    fi
+
+    printf "%-30s %-6s %-8s %-8s %-4s\n" "DOMAIN" "PHP" "HORIZON" "WORKERS" "SSL"
+    printf "%-30s %-6s %-8s %-8s %-4s\n" "------" "---" "-------" "-------" "---"
+
+    for conf in "${SITE_CONFIG_DIR}"/*.conf; do
+        # Source in subshell to prevent variable pollution
+        (
+            # shellcheck disable=SC1090
+            source "$conf"
+            local horizon_display="-"
+            local workers_display="${QUEUE_WORKERS:-0}"
+            if [[ "${ENABLE_HORIZON:-false}" == "true" ]]; then
+                horizon_display="yes"
+                workers_display="-"
+            fi
+            printf "%-30s %-6s %-8s %-8s %-4s\n" \
+                "${DOMAIN:-unknown}" \
+                "${PHP_VERSION:-?}" \
+                "$horizon_display" \
+                "$workers_display" \
+                "${SSL:-no}"
+        )
+    done
+}
+
+# ---------------------------------------------------------------------------
+# deploy commands
+# ---------------------------------------------------------------------------
+cmd_deploy() {
+    [[ $# -ge 1 ]] || die "Usage: forge-lite deploy <domain|setup> [flags]"
+
+    # Check if first arg is the "setup" subcommand
+    if [[ "$1" == "setup" ]]; then
+        shift
+        cmd_deploy_setup "$@"
+        return
+    fi
+
+    local domain="$1"; shift
+    local args=("$@")
+
+    # Check if --artifact or --repo was explicitly passed
+    local has_artifact=false has_repo=false
+    for arg in "${args[@]+"${args[@]}"}"; do
+        case "$arg" in
+            --artifact=*) has_artifact=true ;;
+            --repo=*)     has_repo=true ;;
+        esac
+    done
+
+    # Auto-inject repo config if neither --artifact nor --repo was passed
+    if [[ "$has_artifact" == false && "$has_repo" == false ]]; then
+        local site_conf="${SITE_CONFIG_DIR}/${domain}.conf"
+        if [[ -f "$site_conf" ]]; then
+            # Read config in subshell to prevent variable pollution
+            local deploy_repo deploy_branch
+            deploy_repo=$(grep "^DEPLOY_REPO=" "$site_conf" 2>/dev/null | head -1 | cut -d= -f2-) || true
+            deploy_branch=$(grep "^DEPLOY_BRANCH=" "$site_conf" 2>/dev/null | head -1 | cut -d= -f2-) || true
+
+            if [[ -n "$deploy_repo" ]]; then
+                args+=("--repo=${deploy_repo}")
+                if [[ -n "$deploy_branch" ]]; then
+                    args+=("--branch=${deploy_branch}")
+                fi
+                log_info "Using configured repo: ${deploy_repo} (branch: ${deploy_branch:-default})"
+            fi
+        fi
+    fi
+
+    exec "${FORGE_LITE_DIR}/deploy/deploy.sh" "$domain" "${args[@]+"${args[@]}"}"
+}
+
+cmd_deploy_setup() {
+    local domain="" repo="" branch="main"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --repo=*)   repo="${1#*=}"; shift ;;
+            --branch=*) branch="${1#*=}"; shift ;;
+            -h|--help)
+                echo "Usage: forge-lite deploy setup <domain> --repo=URL [--branch=BRANCH]"
+                exit 0
+                ;;
+            -*)         die "Unknown flag: $1" ;;
+            *)          domain="$1"; shift ;;
+        esac
+    done
+
+    [[ -n "$domain" ]] || die "Domain required. Usage: forge-lite deploy setup <domain> --repo=URL"
+    [[ -n "$repo" ]]   || die "Repository URL required. Use --repo=URL"
+
+    local site_conf="${SITE_CONFIG_DIR}/${domain}.conf"
+    [[ -f "$site_conf" ]] || die "Site config not found: ${site_conf}. Is '${domain}' a valid site?"
+
+    config_upsert "$site_conf" "DEPLOY_REPO" "$repo"
+    config_upsert "$site_conf" "DEPLOY_BRANCH" "$branch"
+
+    log_ok "Deploy config saved for ${domain}"
+    log_info "  Repo:   ${repo}"
+    log_info "  Branch: ${branch}"
+    log_info "Run 'forge-lite deploy ${domain}' to deploy."
+}
+
+# ---------------------------------------------------------------------------
+# Main dispatch
+# ---------------------------------------------------------------------------
+[[ $# -ge 1 ]] || usage
+
+case "$1" in
+    site)
+        shift; cmd_site "$@" ;;
+    deploy)
+        shift; cmd_deploy "$@" ;;
+    rollback)
+        shift
+        exec "${FORGE_LITE_DIR}/deploy/rollback.sh" "$@"
+        ;;
+    db)
+        shift
+        exec forge-lite-db "$@"
+        ;;
+    env)
+        shift
+        exec forge-lite-env "$@"
+        ;;
+    ssl)
+        shift
+        exec forge-lite-ssl "$@"
+        ;;
+    php)
+        shift
+        exec php-switch "$@"
+        ;;
+    provision)
+        shift
+        exec "${FORGE_LITE_DIR}/server/provision.sh" "$@"
+        ;;
+    -h|--help)
+        usage
+        ;;
+    *)
+        die "Unknown command: $1. Run 'forge-lite --help' for usage."
+        ;;
+esac
