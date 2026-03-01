@@ -3,7 +3,7 @@
 provision_node() {
     log_info "=== Provisioning: Node.js ==="
 
-    local node_version="${FORGE_LITE_NODE_VERSION:-20}"
+    local node_version="${FORGE_LITE_NODE_VERSION:-22}"
 
     if command -v node &>/dev/null; then
         local current

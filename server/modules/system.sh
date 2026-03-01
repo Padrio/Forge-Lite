@@ -32,6 +32,10 @@ provision_system() {
     usermod -aG sudo deployer 2>/dev/null || true
     usermod -aG www-data deployer 2>/dev/null || true
 
+    # Make home directory traversable by www-data (nginx)
+    # 711 = owner rwx, group --x, others --x (traverse only, no listing)
+    chmod 711 /home/deployer
+
     # Passwordless sudo for deployer
     if [[ ! -f /etc/sudoers.d/deployer ]]; then
         echo "deployer ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/deployer

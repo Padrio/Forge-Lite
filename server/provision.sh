@@ -23,7 +23,7 @@ done
 FORGE_LITE_PHP_DEFAULT="8.3"
 FORGE_LITE_DB_PASSWORD=""
 FORGE_LITE_REDIS_PASSWORD=""
-FORGE_LITE_NODE_VERSION="20"
+FORGE_LITE_NODE_VERSION="22"
 SKIP_REBOOT=false
 FORCE=false
 
@@ -35,7 +35,7 @@ Options:
     --php-default=VERSION   Default PHP CLI version (default: 8.3)
     --db-password=PASS      MariaDB root password (auto-generated if omitted)
     --redis-password=PASS   Redis password (auto-generated if omitted)
-    --node-version=VERSION  Node.js major version (default: 20)
+    --node-version=VERSION  Node.js major version (default: 22)
     --skip-reboot           Don't reboot after provisioning
     --force                 Re-provision even if already provisioned
     -h, --help              Show this help message
@@ -106,6 +106,7 @@ log_info "Installing CLI helpers..."
 install -m 755 "${FORGE_LITE_DIR}/cli/php-switch" /usr/local/bin/php-switch
 install -m 755 "${FORGE_LITE_DIR}/cli/forge-lite-db" /usr/local/bin/forge-lite-db
 install -m 755 "${FORGE_LITE_DIR}/cli/forge-lite-ssl" /usr/local/bin/forge-lite-ssl
+install -m 755 "${FORGE_LITE_DIR}/cli/forge-lite-env" /usr/local/bin/forge-lite-env
 
 # Deploy logrotate config
 cp "${FORGE_LITE_DIR}/server/config/templates/logrotate/forge-lite" /etc/logrotate.d/forge-lite

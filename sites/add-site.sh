@@ -22,6 +22,7 @@ ENABLE_SSR=false
 ENABLE_HORIZON=false
 ENABLE_SCHEDULER=true
 SSL=false
+declare -a EXTRA_ENV_VARS=()
 
 usage() {
     cat <<'USAGE'
@@ -35,6 +36,7 @@ Options:
     --enable-horizon        Enable Laravel Horizon (replaces queue workers)
     --no-scheduler          Disable Laravel scheduler cron
     --ssl                   Issue SSL certificate via Let's Encrypt
+    --env=KEY=VALUE         Set extra .env variable (can be repeated)
     -h, --help              Show this help
 USAGE
     exit 0
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         --enable-horizon)   ENABLE_HORIZON=true; shift ;;
         --no-scheduler)     ENABLE_SCHEDULER=false; shift ;;
         --ssl)              SSL=true; shift ;;
+        --env=*)            EXTRA_ENV_VARS+=("${1#*=}"); shift ;;
         -h|--help)          usage ;;
         *)                  die "Unknown option: $1" ;;
     esac
@@ -242,6 +245,25 @@ REDIS_HOST=127.0.0.1
 REDIS_PASSWORD=${REDIS_PASS}
 REDIS_PORT=6379
 ENV
+
+# Apply --env overrides
+for env_pair in "${EXTRA_ENV_VARS[@]+"${EXTRA_ENV_VARS[@]}"}"; do
+    [[ -z "$env_pair" ]] && continue
+    env_key="${env_pair%%=*}"
+    env_val="${env_pair#*=}"
+    if grep -q "^${env_key}=" "${SITE_DIR}/shared/.env"; then
+        sed -i "s|^${env_key}=.*|${env_key}=${env_val}|" "${SITE_DIR}/shared/.env"
+    else
+        echo "${env_key}=${env_val}" >> "${SITE_DIR}/shared/.env"
+    fi
+done
+
+# Generate APP_KEY if still empty
+if grep -q "^APP_KEY=$" "${SITE_DIR}/shared/.env"; then
+    APP_KEY_VALUE="base64:$(openssl rand -base64 32)"
+    sed -i "s|^APP_KEY=.*|APP_KEY=${APP_KEY_VALUE}|" "${SITE_DIR}/shared/.env"
+    log_info "APP_KEY auto-generated"
+fi
 
 chown deployer:deployer "${SITE_DIR}/shared/.env"
 chmod 600 "${SITE_DIR}/shared/.env"

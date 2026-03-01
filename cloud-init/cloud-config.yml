@@ -30,7 +30,7 @@ runcmd:
     PHP_DEFAULT="8.4"         # 8.1 | 8.2 | 8.3 | 8.4
     DB_PASSWORD=""             # leave empty to auto-generate
     REDIS_PASSWORD=""          # leave empty to auto-generate
-    NODE_VERSION="20"          # Node.js major version
+    NODE_VERSION="22"          # Node.js major version
     SKIP_REBOOT="false"        # set to "true" to prevent automatic reboot
     # -----------------------------------------------------------------------
 

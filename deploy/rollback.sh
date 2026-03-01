@@ -80,10 +80,17 @@ sudo -u deployer "$PHP_BIN" artisan event:cache
 log_info "Reloading services..."
 systemctl reload "php${PHP_VERSION}-fpm"
 
+# Ensure supervisor picks up any config changes
+supervisorctl reread >/dev/null 2>&1 || true
+supervisorctl update >/dev/null 2>&1 || true
+
+# Restart supervisor processes for this domain
 for conf in /etc/supervisor/conf.d/${DOMAIN}-*.conf; do
     if [[ -f "$conf" ]]; then
         local_name=$(basename "$conf" .conf)
-        supervisorctl restart "$local_name" 2>/dev/null || true
+        if supervisorctl status "$local_name" 2>/dev/null | grep -qE "RUNNING|STOPPED|EXITED|FATAL"; then
+            supervisorctl restart "$local_name" 2>/dev/null || log_warn "Failed to restart ${local_name}"
+        fi
     fi
 done
 

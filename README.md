@@ -48,7 +48,7 @@ Options:
 --php-default=8.3       Default PHP CLI version
 --db-password=PASS      MariaDB root password (auto-generated if omitted)
 --redis-password=PASS   Redis password (auto-generated if omitted)
---node-version=20       Node.js major version
+--node-version=22       Node.js major version
 --skip-reboot           Don't reboot after provisioning
 --force                 Re-provision (ignores existing marker)
 ```
@@ -168,7 +168,7 @@ sudo bash sites/remove-site.sh example.com --keep-db --keep-files
 | **Composer** | Global install with weekly auto-update |
 | **MariaDB** | Secured, InnoDB tuned (70% RAM), forge-lite admin user |
 | **Redis** | Password-protected, AOF, maxmemory (25% RAM), allkeys-lru |
-| **Node.js** | v20 via NodeSource |
+| **Node.js** | v22 via NodeSource |
 | **Supervisor** | For queue workers, Horizon, SSR |
 | **Certbot** | Let's Encrypt with nginx plugin + auto-renewal |
 

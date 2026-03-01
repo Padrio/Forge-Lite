@@ -114,6 +114,14 @@ ln -sfn "${SHARED_DIR}/.env" "${RELEASE_DIR}/.env"
 rm -rf "${RELEASE_DIR}/storage"
 ln -sfn "${SHARED_DIR}/storage" "${RELEASE_DIR}/storage"
 
+# Generate APP_KEY if not set (first deployment)
+if grep -q "^APP_KEY=$" "${SHARED_DIR}/.env" 2>/dev/null; then
+    log_info "Generating APP_KEY (first deployment)..."
+    APP_KEY_VALUE="base64:$(openssl rand -base64 32)"
+    sed -i "s|^APP_KEY=.*|APP_KEY=${APP_KEY_VALUE}|" "${SHARED_DIR}/.env"
+    log_ok "APP_KEY generated"
+fi
+
 # ---------------------------------------------------------------------------
 # 3. Composer install
 # ---------------------------------------------------------------------------
@@ -176,11 +184,17 @@ ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 log_info "Reloading services..."
 systemctl reload "php${PHP_VERSION}-fpm"
 
-# Restart supervisor workers for this domain
+# Ensure supervisor picks up any config changes
+supervisorctl reread >/dev/null 2>&1 || true
+supervisorctl update >/dev/null 2>&1 || true
+
+# Restart supervisor processes for this domain
 for conf in /etc/supervisor/conf.d/${DOMAIN}-*.conf; do
     if [[ -f "$conf" ]]; then
         local_name=$(basename "$conf" .conf)
-        supervisorctl restart "$local_name" 2>/dev/null || true
+        if supervisorctl status "$local_name" 2>/dev/null | grep -qE "RUNNING|STOPPED|EXITED|FATAL"; then
+            supervisorctl restart "$local_name" 2>/dev/null || log_warn "Failed to restart ${local_name}"
+        fi
     fi
 done
 

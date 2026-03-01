@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# forge-lite CLI: forge-lite-env — .env variable management (list|get|set|delete)
+set -euo pipefail
+
+# Minimal helpers
+log_info()  { echo "[INFO]  $*" >&2; }
+log_ok()    { echo "[OK]    $*" >&2; }
+log_error() { echo "[ERROR] $*" >&2; }
+die() { log_error "$@"; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
+
+usage() {
+    cat <<'USAGE'
+Usage: forge-lite-env <command> <domain> [args]
+
+Commands:
+    list <domain>               Show all .env variables
+    get <domain> <key>          Get a single variable's value
+    set <domain> <key> <value>  Set or update a variable
+    delete <domain> <key>       Remove a variable
+USAGE
+    exit 0
+}
+
+# Resolve .env path from site config
+resolve_env_path() {
+    local domain="$1"
+    local site_config="/etc/forge-lite/${domain}.conf"
+    [[ -f "$site_config" ]] || die "Site config not found: ${site_config}. Is '${domain}' a valid site?"
+
+    # shellcheck disable=SC1090
+    source "$site_config"
+    local site_dir="${SITE_DIR:-/home/deployer/sites/${domain}}"
+    local env_file="${site_dir}/shared/.env"
+    [[ -f "$env_file" ]] || die ".env not found: ${env_file}"
+    echo "$env_file"
+}
+
+cmd_list() {
+    local domain="$1"
+    [[ -n "$domain" ]] || die "Domain required. Usage: forge-lite-env list <domain>"
+    local env_file
+    env_file=$(resolve_env_path "$domain")
+    cat "$env_file"
+}
+
+cmd_get() {
+    local domain="$1"
+    local key="$2"
+    [[ -n "$domain" ]] || die "Domain required."
+    [[ -n "$key" ]] || die "Key required. Usage: forge-lite-env get <domain> <key>"
+    local env_file
+    env_file=$(resolve_env_path "$domain")
+
+    local line
+    line=$(grep "^${key}=" "$env_file") || die "Variable '${key}' not found in .env"
+    echo "${line#*=}"
+}
+
+cmd_set() {
+    local domain="$1"
+    local key="$2"
+    local value="$3"
+    [[ -n "$domain" ]] || die "Domain required."
+    [[ -n "$key" ]] || die "Key required. Usage: forge-lite-env set <domain> <key> <value>"
+    local env_file
+    env_file=$(resolve_env_path "$domain")
+
+    if grep -q "^${key}=" "$env_file"; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "$env_file"
+        log_ok "Updated ${key}"
+    else
+        echo "${key}=${value}" >> "$env_file"
+        log_ok "Added ${key}"
+    fi
+}
+
+cmd_delete() {
+    local domain="$1"
+    local key="$2"
+    [[ -n "$domain" ]] || die "Domain required."
+    [[ -n "$key" ]] || die "Key required. Usage: forge-lite-env delete <domain> <key>"
+    local env_file
+    env_file=$(resolve_env_path "$domain")
+
+    if grep -q "^${key}=" "$env_file"; then
+        sed -i "/^${key}=/d" "$env_file"
+        log_ok "Deleted ${key}"
+    else
+        die "Variable '${key}' not found in .env"
+    fi
+}
+
+# Main dispatch
+[[ $# -ge 1 ]] || usage
+
+case "$1" in
+    list)    cmd_list "${2:-}" ;;
+    get)     cmd_get "${2:-}" "${3:-}" ;;
+    set)     cmd_set "${2:-}" "${3:-}" "${4:-}" ;;
+    delete)  cmd_delete "${2:-}" "${3:-}" ;;
+    -h|--help) usage ;;
+    *)       die "Unknown command: $1. Run with --help for usage." ;;
+esac
