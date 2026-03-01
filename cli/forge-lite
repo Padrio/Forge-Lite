@@ -56,6 +56,7 @@ Commands:
     ssl <subcommand> [args]           SSL certificate management
     php <version>                     Switch default PHP version
     provision [flags]                 Provision the server
+    update                            Reinstall CLI tools and completions
 
 Run 'forge-lite <command> --help' for command-specific help.
 USAGE
@@ -198,6 +199,30 @@ cmd_deploy_setup() {
 }
 
 # ---------------------------------------------------------------------------
+# update command
+# ---------------------------------------------------------------------------
+cmd_update() {
+    local cli_dir="${FORGE_LITE_DIR}/cli"
+    local tools=(php-switch forge-lite-db forge-lite-ssl forge-lite-env forge-lite)
+
+    log_info "Reinstalling CLI tools from ${cli_dir} ..."
+    for tool in "${tools[@]}"; do
+        install -m 755 "${cli_dir}/${tool}" /usr/local/bin/
+        log_ok "Installed ${tool}"
+    done
+
+    local completion_src="${cli_dir}/completions/forge-lite.bash"
+    if [[ -d /etc/bash_completion.d ]]; then
+        install -m 644 "$completion_src" /etc/bash_completion.d/forge-lite
+        log_ok "Installed bash completion"
+    else
+        log_warn "Skipped bash completion (/etc/bash_completion.d not found)"
+    fi
+
+    log_ok "forge-lite update complete — ${#tools[@]} tools reinstalled."
+}
+
+# ---------------------------------------------------------------------------
 # Main dispatch
 # ---------------------------------------------------------------------------
 [[ $# -ge 1 ]] || usage
@@ -230,6 +255,9 @@ case "$1" in
     provision)
         shift
         exec "${FORGE_LITE_DIR}/server/provision.sh" "$@"
+        ;;
+    update)
+        cmd_update
         ;;
     -h|--help)
         usage
