@@ -25,9 +25,9 @@ runcmd:
     # -----------------------------------------------------------------------
     # CONFIGURATION — edit these variables to match your setup
     # -----------------------------------------------------------------------
-    FORGE_LITE_REPO="https://github.com/your-org/forge-lite.git"  # your repo URL
+    FORGE_LITE_REPO="https://github.com/Padrio/Forge-Lite.git"  # your repo URL
     FORGE_LITE_BRANCH="main"
-    PHP_DEFAULT="8.3"         # 8.1 | 8.2 | 8.3 | 8.4
+    PHP_DEFAULT="8.4"         # 8.1 | 8.2 | 8.3 | 8.4
     DB_PASSWORD=""             # leave empty to auto-generate
     REDIS_PASSWORD=""          # leave empty to auto-generate
     NODE_VERSION="20"          # Node.js major version

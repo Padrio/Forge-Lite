@@ -33,7 +33,7 @@ tail -f /var/log/forge-lite-cloud-init.log
 ### 1. Clone to the server
 
 ```bash
-git clone https://github.com/your-org/forge-lite.git /opt/forge-lite
+git clone https://github.com/Padrio/Forge-Lite.git /opt/forge-lite
 cd /opt/forge-lite
 ```
 
