@@ -9,7 +9,7 @@ A lightweight, bash-based server provisioning and deployment system for Laravel 
 - **Zero-downtime deployments**: Atomic symlink swap with automatic rollback support
 - **CI/CD ready**: GitHub Actions workflows for automatic deployment on push
 - **Idempotent**: Every script is safe to re-run
-- **CLI tools**: `php-switch`, `forge-lite-db`, `forge-lite-ssl`
+- **CLI tools**: Unified `forge-lite` command plus `forge-lite-db`, `forge-lite-ssl`, `forge-lite-env`, `php-switch`
 
 ## Prerequisites
 
@@ -40,7 +40,7 @@ cd /opt/forge-lite
 ### 2. Provision the server
 
 ```bash
-sudo bash server/provision.sh
+sudo forge-lite provision
 ```
 
 Options:
@@ -56,7 +56,7 @@ Options:
 ### 3. Add a site
 
 ```bash
-sudo bash sites/add-site.sh \
+sudo forge-lite site add \
   --domain=example.com \
   --php=8.3 \
   --queue-workers=2 \
@@ -72,26 +72,47 @@ Options:
 --enable-horizon        Use Horizon instead of queue workers
 --no-scheduler          Disable Laravel scheduler
 --ssl                   Issue SSL certificate
+--env=KEY=VALUE         Extra .env variable (repeatable)
 ```
 
 ### 4. Deploy
 
-**Manual deployment (on the server):**
+**Configure repo-based deployments (one-time):**
 ```bash
-sudo bash deploy/deploy.sh example.com \
+sudo forge-lite deploy setup example.com \
+  --repo=git@github.com:your-org/your-app.git \
+  --branch=main
+```
+
+**Deploy (uses saved repo config):**
+```bash
+sudo forge-lite deploy example.com
+```
+
+**Manual deployment with explicit repo:**
+```bash
+sudo forge-lite deploy example.com \
   --repo=git@github.com:your-org/your-app.git \
   --branch=main
 ```
 
 **Artifact deployment (from CI):**
 ```bash
-sudo bash deploy/deploy.sh example.com \
+sudo forge-lite deploy example.com \
   --artifact=/tmp/deploy-artifact.tar.gz
+```
+
+Options:
+```
+--repo=URL              Git repository URL
+--branch=BRANCH         Git branch (default: main)
+--artifact=PATH         Deploy from a tar.gz artifact instead of git
+--keep=N                Number of releases to keep (default: 5)
 ```
 
 **Rollback:**
 ```bash
-sudo bash deploy/rollback.sh example.com
+sudo forge-lite rollback example.com
 ```
 
 ### 5. GitHub Actions (CI/CD)
@@ -129,11 +150,30 @@ sudo forge-lite-ssl renew example.com    # Force renew
 sudo forge-lite-ssl status example.com   # Show certificate info
 ```
 
-## Site Removal
-
+### forge-lite-env
 ```bash
-sudo bash sites/remove-site.sh example.com
-sudo bash sites/remove-site.sh example.com --keep-db --keep-files
+sudo forge-lite-env list example.com           # Show all .env variables
+sudo forge-lite-env get example.com APP_KEY    # Get a variable
+sudo forge-lite-env set example.com KEY VALUE  # Set a variable
+sudo forge-lite-env delete example.com KEY     # Remove a variable
+```
+
+### forge-lite update
+```bash
+sudo forge-lite update   # Reinstall CLI tools and bash completions
+```
+
+## Site Management
+
+**List all sites:**
+```bash
+sudo forge-lite site list
+```
+
+**Remove a site:**
+```bash
+sudo forge-lite site remove example.com
+sudo forge-lite site remove example.com --keep-db --keep-files
 ```
 
 ## Directory Layout
@@ -201,7 +241,7 @@ tail -f /home/deployer/sites/example.com/shared/storage/logs/worker.log
 
 **Re-provision (safe — idempotent):**
 ```bash
-sudo bash /opt/forge-lite/server/provision.sh --force --skip-reboot
+sudo forge-lite provision --force --skip-reboot
 ```
 
 ## License
