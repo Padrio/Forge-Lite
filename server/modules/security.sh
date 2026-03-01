@@ -17,7 +17,6 @@ provision_security() {
         sshd_changed=true
     }
 
-    set_sshd_option "PermitRootLogin" "no"
     set_sshd_option "PasswordAuthentication" "no"
     set_sshd_option "MaxAuthTries" "3"
     set_sshd_option "X11Forwarding" "no"
@@ -25,7 +24,22 @@ provision_security() {
 
     if [[ "$sshd_changed" == true ]]; then
         sshd -t && systemctl reload sshd
-        log_ok "SSH hardened (key-only, no root, MaxAuthTries=3)"
+        log_ok "SSH hardened (key-only, MaxAuthTries=3)"
+    fi
+
+    # --- Propagate root SSH keys to deployer ---
+    local root_keys="/root/.ssh/authorized_keys"
+    local deployer_ssh="/home/deployer/.ssh"
+    local deployer_keys="${deployer_ssh}/authorized_keys"
+    if [[ -f "$root_keys" ]]; then
+        mkdir -p "$deployer_ssh"
+        cp "$root_keys" "$deployer_keys"
+        chown -R deployer:deployer "$deployer_ssh"
+        chmod 700 "$deployer_ssh"
+        chmod 600 "$deployer_keys"
+        log_ok "SSH keys propagated to deployer user"
+    else
+        log_warn "No root SSH keys found — skipping deployer key propagation"
     fi
 
     # --- UFW ---
