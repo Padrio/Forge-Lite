@@ -23,7 +23,7 @@ provision_security() {
     set_sshd_option "AllowAgentForwarding" "no"
 
     if [[ "$sshd_changed" == true ]]; then
-        sshd -t && systemctl reload sshd
+        sshd -t && systemctl reload ssh
         log_ok "SSH hardened (key-only, MaxAuthTries=3)"
     fi
 
