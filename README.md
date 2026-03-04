@@ -117,13 +117,31 @@ sudo forge-lite rollback example.com
 
 ### 5. GitHub Actions (CI/CD)
 
+Deployments use a **self-hosted runner** on your server — no SSH secrets needed.
+
+**Set up the runner (one-time):**
+
+1. Go to your GitHub repo → Settings → Actions → Runners → **New self-hosted runner**
+2. Copy the registration token
+3. On your server:
+   ```bash
+   sudo forge-lite runner setup \
+     --repo=https://github.com/your-org/your-app \
+     --token=AXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
+     --labels=forge-lite,production
+   ```
+4. Verify the runner is online:
+   ```bash
+   sudo forge-lite runner status
+   ```
+
+**Configure workflows:**
+
 1. Edit `.github/workflows/deploy-production.yml` — set your domain
 2. Edit `.github/workflows/deploy-staging.yml` — set your staging domain
-3. Add repository secrets:
-   - `SSH_PRIVATE_KEY` — Private SSH key for the deployer user
-   - `SSH_HOST` — Server IP or hostname
-   - `SSH_USER` — SSH username (e.g., `deployer`)
-4. Push to `main` (production) or `develop` (staging) to trigger deployment
+3. Push to `main` (production) or `develop` (staging) to trigger deployment
+
+**Multi-server setup:** Use different labels per server (e.g., `forge-lite,production` vs `forge-lite,staging`) and match them in the workflow files.
 
 ## CLI Tools
 
@@ -161,6 +179,13 @@ sudo forge-lite-env delete example.com KEY     # Remove a variable
 ### forge-lite update
 ```bash
 sudo forge-lite update   # Reinstall CLI tools and bash completions
+```
+
+### forge-lite runner
+```bash
+sudo forge-lite runner setup --repo=URL --token=TOKEN [--labels=LABELS]
+sudo forge-lite runner remove --token=TOKEN
+sudo forge-lite runner status
 ```
 
 ## Site Management
@@ -211,6 +236,7 @@ sudo forge-lite site remove example.com --keep-db --keep-files
 | **Node.js** | v22 via NodeSource |
 | **Supervisor** | For queue workers, Horizon, SSR |
 | **Certbot** | Let's Encrypt with nginx plugin + auto-renewal |
+| **GitHub Runner** | Self-hosted Actions runner (optional, via `forge-lite runner setup`) |
 
 ## Troubleshooting
 
