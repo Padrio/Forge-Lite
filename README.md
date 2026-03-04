@@ -137,8 +137,8 @@ Deployments use a **self-hosted runner** on your server — no SSH secrets neede
 
 **Configure workflows:**
 
-1. Edit `.github/workflows/deploy-production.yml` — set your domain
-2. Edit `.github/workflows/deploy-staging.yml` — set your staging domain
+1. Edit `templates/workflows/deploy-production.yml` — set your domain
+2. Edit `templates/workflows/deploy-staging.yml` — set your staging domain
 3. Push to `main` (production) or `develop` (staging) to trigger deployment
 
 **Multi-server setup:** Use different labels per server (e.g., `forge-lite,production` vs `forge-lite,staging`) and match them in the workflow files.
