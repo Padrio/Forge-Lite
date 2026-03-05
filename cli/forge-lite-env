@@ -2,11 +2,21 @@
 # forge-lite CLI: forge-lite-env — .env variable management (list|get|set|delete)
 set -euo pipefail
 
-# Minimal helpers
-log_info()  { echo "[INFO]  $*" >&2; }
-log_ok()    { echo "[OK]    $*" >&2; }
-log_error() { echo "[ERROR] $*" >&2; }
-die() { log_error "$@"; exit 1; }
+# Source lib/common.sh if available (provides log_*, sed_escape_value, etc.)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/../lib/common.sh" ]]; then
+    export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    source "${FORGE_LITE_DIR}/lib/common.sh"
+else
+    # Minimal fallback for installed CLI
+    log_info()  { echo "[INFO]  $*" >&2; }
+    log_ok()    { echo "[OK]    $*" >&2; }
+    log_error() { echo "[ERROR] $*" >&2; }
+    die() { log_error "$@"; exit 1; }
+    sed_escape_value() {
+        printf '%s' "$1" | sed -e 's/[&/\|]/\\&/g'
+    }
+fi
 
 [[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
 
@@ -54,7 +64,7 @@ cmd_get() {
     env_file=$(resolve_env_path "$domain")
 
     local line
-    line=$(grep "^${key}=" "$env_file") || die "Variable '${key}' not found in .env"
+    line=$(grep -F "${key}=" "$env_file" | grep "^${key}=" | head -1) || die "Variable '${key}' not found in .env"
     echo "${line#*=}"
 }
 
@@ -67,8 +77,10 @@ cmd_set() {
     local env_file
     env_file=$(resolve_env_path "$domain")
 
-    if grep -q "^${key}=" "$env_file"; then
-        sed -i "s|^${key}=.*|${key}=${value}|" "$env_file"
+    local escaped_val
+    escaped_val=$(sed_escape_value "$value")
+    if grep -qF "${key}=" "$env_file" && grep -q "^${key}=" "$env_file"; then
+        sed -i "s|^${key}=.*|${key}=${escaped_val}|" "$env_file"
         log_ok "Updated ${key}"
     else
         echo "${key}=${value}" >> "$env_file"
@@ -84,7 +96,7 @@ cmd_delete() {
     local env_file
     env_file=$(resolve_env_path "$domain")
 
-    if grep -q "^${key}=" "$env_file"; then
+    if grep -qF "${key}=" "$env_file" && grep -q "^${key}=" "$env_file"; then
         sed -i "/^${key}=/d" "$env_file"
         log_ok "Deleted ${key}"
     else

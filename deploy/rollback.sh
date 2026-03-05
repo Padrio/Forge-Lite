@@ -68,13 +68,13 @@ sudo -u deployer "$PHP_BIN" artisan down --retry=60 || true
 log_info "Swapping symlink..."
 ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
 
-# Re-cache
+# Re-cache (non-fatal — rollback must not fail on cache errors)
 log_info "Re-caching..."
 cd "$CURRENT_LINK"
-sudo -u deployer "$PHP_BIN" artisan config:cache
-sudo -u deployer "$PHP_BIN" artisan route:cache
-sudo -u deployer "$PHP_BIN" artisan view:cache
-sudo -u deployer "$PHP_BIN" artisan event:cache
+sudo -u deployer "$PHP_BIN" artisan config:cache || log_warn "config:cache failed (non-fatal)"
+sudo -u deployer "$PHP_BIN" artisan route:cache  || log_warn "route:cache failed (non-fatal)"
+sudo -u deployer "$PHP_BIN" artisan view:cache   || log_warn "view:cache failed (non-fatal)"
+sudo -u deployer "$PHP_BIN" artisan event:cache  || log_warn "event:cache failed (non-fatal)"
 
 # Reload services
 log_info "Reloading services..."

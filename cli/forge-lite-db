@@ -4,37 +4,67 @@ set -euo pipefail
 
 CREDENTIALS_FILE="/root/.forge-lite-credentials"
 
-# Minimal helpers
-log_info()  { echo "[INFO]  $*" >&2; }
-log_ok()    { echo "[OK]    $*" >&2; }
-log_error() { echo "[ERROR] $*" >&2; }
-die() { log_error "$@"; exit 1; }
+# Source lib/common.sh if available (provides log_*, mysql_safe, etc.)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/../lib/common.sh" ]]; then
+    export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    source "${FORGE_LITE_DIR}/lib/common.sh"
+    source "${FORGE_LITE_DIR}/lib/credentials.sh"
+else
+    # Minimal fallback for installed CLI
+    log_info()  { echo "[INFO]  $*" >&2; }
+    log_ok()    { echo "[OK]    $*" >&2; }
+    log_error() { echo "[ERROR] $*" >&2; }
+    die() { log_error "$@"; exit 1; }
+
+    get_credential() {
+        local key="$1"
+        [[ -f "$CREDENTIALS_FILE" ]] || die "Credentials file not found: ${CREDENTIALS_FILE}"
+        local line
+        line=$(grep -F "${key}=" "$CREDENTIALS_FILE" | grep "^${key}=" | head -1) || die "Credential '${key}' not found."
+        echo "${line#*=}"
+    }
+
+    store_credential() {
+        local key="$1" value="$2"
+        if grep -qF "${key}=" "$CREDENTIALS_FILE" 2>/dev/null && grep -q "^${key}=" "$CREDENTIALS_FILE" 2>/dev/null; then
+            return 0
+        fi
+        echo "${key}=${value}" >> "$CREDENTIALS_FILE"
+    }
+
+    generate_password() {
+        openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c "${1:-32}"
+    }
+
+    mysql_safe() {
+        local root_pass="$1"; shift
+        local cnf
+        cnf="$(mktemp)"
+        chmod 600 "$cnf"
+        printf '[client]\nuser=root\npassword=%s\n' "$root_pass" > "$cnf"
+        mysql --defaults-extra-file="$cnf" "$@"
+        local rc=$?
+        rm -f "$cnf"
+        return $rc
+    }
+
+    mysqldump_safe() {
+        local root_pass="$1"; shift
+        local cnf
+        cnf="$(mktemp)"
+        chmod 600 "$cnf"
+        printf '[client]\nuser=root\npassword=%s\n' "$root_pass" > "$cnf"
+        mysqldump --defaults-extra-file="$cnf" "$@"
+        local rc=$?
+        rm -f "$cnf"
+        return $rc
+    }
+fi
 
 [[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
 
-# Read MariaDB root password
-get_credential() {
-    local key="$1"
-    [[ -f "$CREDENTIALS_FILE" ]] || die "Credentials file not found: ${CREDENTIALS_FILE}"
-    local line
-    line=$(grep "^${key}=" "$CREDENTIALS_FILE") || die "Credential '${key}' not found."
-    echo "${line#*=}"
-}
-
-store_credential() {
-    local key="$1" value="$2"
-    if grep -q "^${key}=" "$CREDENTIALS_FILE" 2>/dev/null; then
-        return 0
-    fi
-    echo "${key}=${value}" >> "$CREDENTIALS_FILE"
-}
-
-generate_password() {
-    openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c "${1:-32}"
-}
-
 ROOT_PASS=$(get_credential "MARIADB_ROOT_PASSWORD")
-MYSQL_CMD="mysql -u root -p${ROOT_PASS}"
 
 usage() {
     cat <<'USAGE'
@@ -59,10 +89,10 @@ cmd_create() {
     local db_pass
     db_pass=$(generate_password 32)
 
-    $MYSQL_CMD -e "CREATE DATABASE IF NOT EXISTS \`${safe_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-    $MYSQL_CMD -e "CREATE USER IF NOT EXISTS '${safe_name}'@'localhost' IDENTIFIED BY '${db_pass}';"
-    $MYSQL_CMD -e "GRANT ALL PRIVILEGES ON \`${safe_name}\`.* TO '${safe_name}'@'localhost';"
-    $MYSQL_CMD -e "FLUSH PRIVILEGES;"
+    mysql_safe "$ROOT_PASS" -e "CREATE DATABASE IF NOT EXISTS \`${safe_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    mysql_safe "$ROOT_PASS" -e "CREATE USER IF NOT EXISTS '${safe_name}'@'localhost' IDENTIFIED BY '${db_pass}';"
+    mysql_safe "$ROOT_PASS" -e "GRANT ALL PRIVILEGES ON \`${safe_name}\`.* TO '${safe_name}'@'localhost';"
+    mysql_safe "$ROOT_PASS" -e "FLUSH PRIVILEGES;"
 
     store_credential "DB_${safe_name}_PASSWORD" "$db_pass"
 
@@ -84,15 +114,15 @@ cmd_drop() {
         [[ "$answer" =~ ^[Yy]$ ]] || { log_info "Aborted."; exit 0; }
     fi
 
-    $MYSQL_CMD -e "DROP DATABASE IF EXISTS \`${safe_name}\`;"
-    $MYSQL_CMD -e "DROP USER IF EXISTS '${safe_name}'@'localhost';"
-    $MYSQL_CMD -e "FLUSH PRIVILEGES;"
+    mysql_safe "$ROOT_PASS" -e "DROP DATABASE IF EXISTS \`${safe_name}\`;"
+    mysql_safe "$ROOT_PASS" -e "DROP USER IF EXISTS '${safe_name}'@'localhost';"
+    mysql_safe "$ROOT_PASS" -e "FLUSH PRIVILEGES;"
 
     log_ok "Database '${safe_name}' and user dropped"
 }
 
 cmd_list() {
-    $MYSQL_CMD -e "SHOW DATABASES;" | tail -n +2 | grep -vE '^(information_schema|performance_schema|mysql|sys)$'
+    mysql_safe "$ROOT_PASS" -e "SHOW DATABASES;" | tail -n +2 | grep -vE '^(information_schema|performance_schema|mysql|sys)$'
 }
 
 cmd_backup() {
@@ -108,7 +138,7 @@ cmd_backup() {
     timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_file="${backup_dir}/${safe_name}_${timestamp}.sql.gz"
 
-    mysqldump -u root -p"${ROOT_PASS}" "$safe_name" | gzip > "$backup_file"
+    mysqldump_safe "$ROOT_PASS" "$safe_name" --single-transaction | gzip > "$backup_file"
     chown deployer:deployer "$backup_file" 2>/dev/null || true
 
     log_ok "Backup saved to ${backup_file}"
@@ -125,9 +155,9 @@ cmd_restore() {
     safe_name=$(echo "$name" | tr '.-' '_' | tr -cd 'a-zA-Z0-9_')
 
     if [[ "$file" == *.gz ]]; then
-        gunzip -c "$file" | $MYSQL_CMD "$safe_name"
+        gunzip -c "$file" | mysql_safe "$ROOT_PASS" "$safe_name"
     else
-        $MYSQL_CMD "$safe_name" < "$file"
+        mysql_safe "$ROOT_PASS" "$safe_name" < "$file"
     fi
 
     log_ok "Database '${safe_name}' restored from ${file}"

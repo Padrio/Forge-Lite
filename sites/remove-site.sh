@@ -107,20 +107,20 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Remove PHP-FPM pool
 # ---------------------------------------------------------------------------
-local php_v="${PHP_VERSION:-8.3}"
+php_v="${PHP_VERSION:-8.3}"
 rm -f "/etc/php/${php_v}/fpm/pool.d/${DOMAIN}.conf"
 systemctl restart "php${php_v}-fpm" 2>/dev/null || true
 log_info "Removed FPM pool"
 
 # ---------------------------------------------------------------------------
-# 5. Drop database (unless --keep-db)
+# 5. Drop database (unless --keep-db) — via mysql_safe (no password in ps)
 # ---------------------------------------------------------------------------
 if [[ "$KEEP_DB" != true ]]; then
     ROOT_PASS=$(get_credential "MARIADB_ROOT_PASSWORD" 2>/dev/null) || true
     if [[ -n "${ROOT_PASS:-}" ]]; then
-        mysql -u root -p"${ROOT_PASS}" -e "DROP DATABASE IF EXISTS \`${SITE_ID}\`;" 2>/dev/null || true
-        mysql -u root -p"${ROOT_PASS}" -e "DROP USER IF EXISTS '${SITE_ID}'@'localhost';" 2>/dev/null || true
-        mysql -u root -p"${ROOT_PASS}" -e "FLUSH PRIVILEGES;" 2>/dev/null || true
+        mysql_safe "${ROOT_PASS}" -e "DROP DATABASE IF EXISTS \`${SITE_ID}\`;" 2>/dev/null || true
+        mysql_safe "${ROOT_PASS}" -e "DROP USER IF EXISTS '${SITE_ID}'@'localhost';" 2>/dev/null || true
+        mysql_safe "${ROOT_PASS}" -e "FLUSH PRIVILEGES;" 2>/dev/null || true
         log_info "Dropped database and user"
     else
         log_warn "Could not read MariaDB root password — skipping database removal"
@@ -131,7 +131,7 @@ fi
 # 6. Remove site files (unless --keep-files)
 # ---------------------------------------------------------------------------
 if [[ "$KEEP_FILES" != true ]]; then
-    local site_dir="${SITE_DIR:-/home/deployer/sites/$DOMAIN}"
+    site_dir="${SITE_DIR:-/home/deployer/sites/$DOMAIN}"
     if [[ -d "$site_dir" ]]; then
         rm -rf "$site_dir"
         log_info "Removed site files"

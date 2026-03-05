@@ -22,12 +22,11 @@ store_credential() {
     local key="$1" value="$2"
 
     if [[ ! -f "$CREDENTIALS_FILE" ]]; then
-        touch "$CREDENTIALS_FILE"
-        chmod 600 "$CREDENTIALS_FILE"
+        install -m 600 /dev/null "$CREDENTIALS_FILE"
     fi
 
     # Do not overwrite an existing key
-    if grep -q "^${key}=" "$CREDENTIALS_FILE" 2>/dev/null; then
+    if grep -qF "${key}=" "$CREDENTIALS_FILE" 2>/dev/null && grep -q "^${key}=" "$CREDENTIALS_FILE" 2>/dev/null; then
         return 0
     fi
 
@@ -46,6 +45,6 @@ get_credential() {
     fi
 
     local line
-    line=$(grep "^${key}=" "$CREDENTIALS_FILE" 2>/dev/null) || return 1
+    line=$(grep -F "${key}=" "$CREDENTIALS_FILE" 2>/dev/null | grep "^${key}=" | head -1) || return 1
     echo "${line#*=}"
 }

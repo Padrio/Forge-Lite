@@ -25,6 +25,10 @@ on:
         required: false
         type: string
         default: '22'
+      run-tests:
+        required: false
+        type: string
+        default: 'false'
 
 concurrency:
   group: deploy-${{ inputs.environment }}
@@ -50,6 +54,11 @@ jobs:
           npm ci
           npm run build
 
+      - name: Run tests
+        if: inputs.run-tests != 'false'
+        run: |
+          php artisan test --parallel
+
       - name: Create deployment artifact
         run: |
           tar -czf /tmp/deploy-artifact.tar.gz \
@@ -73,3 +82,8 @@ jobs:
       - name: Cleanup artifact
         if: always()
         run: rm -f /tmp/deploy-artifact.tar.gz
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Deployment to ${{ inputs.environment }} (${{ inputs.domain }}) failed!"

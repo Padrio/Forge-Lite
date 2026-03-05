@@ -6,10 +6,7 @@
     delaycompress
     notifempty
     create 0640 deployer deployer
-    sharedscripts
-    postrotate
-        /usr/bin/supervisorctl restart all > /dev/null 2>&1 || true
-    endscript
+    copytruncate
 }
 
 /var/log/nginx/*-access.log

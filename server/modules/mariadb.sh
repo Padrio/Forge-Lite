@@ -37,16 +37,17 @@ MYSQL
         store_credential "MARIADB_ADMIN_PASSWORD" "$admin_pass"
     }
 
-    mysql -u root -p"${root_pass}" -e \
+    mysql_safe "${root_pass}" -e \
         "CREATE USER IF NOT EXISTS 'forgelite'@'localhost' IDENTIFIED BY '${admin_pass}';
          GRANT ALL PRIVILEGES ON *.* TO 'forgelite'@'localhost' WITH GRANT OPTION;
          FLUSH PRIVILEGES;" 2>/dev/null || true
 
-    # InnoDB tuning — 70% of RAM for buffer pool
+    # InnoDB tuning — 40% of RAM for buffer pool (leave room for PHP-FPM + Redis)
     local template_dir="${FORGE_LITE_DIR}/server/config/templates/mariadb"
     local ram_mb
     ram_mb=$(free -m | awk '/^Mem:/ {print $2}')
-    local buffer_pool_mb=$(( ram_mb * 70 / 100 ))
+    local buffer_pool_mb=$(( ram_mb * 40 / 100 ))
+    [[ $buffer_pool_mb -lt 256 ]] && buffer_pool_mb=256
 
     render_template "${template_dir}/50-server.cnf" \
         /etc/mysql/mariadb.conf.d/50-server.cnf \

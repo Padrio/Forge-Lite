@@ -24,7 +24,7 @@ _forge_lite_complete() {
     }
 
     # Top-level commands
-    local commands="site deploy rollback runner db env ssl php provision update"
+    local commands="site deploy rollback runner db env ssl php provision update status --version"
 
     case "$cword" in
         1)

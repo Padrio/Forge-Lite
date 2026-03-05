@@ -79,6 +79,24 @@ log_info "  Adding site: ${DOMAIN}"
 log_info "=========================================="
 
 # ---------------------------------------------------------------------------
+# Cleanup trap — remove partially created resources on failure
+# ---------------------------------------------------------------------------
+ADD_SITE_FAILED=true
+cleanup_add_site() {
+    if [[ "$ADD_SITE_FAILED" == true ]]; then
+        log_warn "Site creation failed -- cleaning up..."
+        rm -f "/etc/php/${PHP_VERSION}/fpm/pool.d/${DOMAIN}.conf" 2>/dev/null || true
+        rm -f "/etc/nginx/sites-enabled/${DOMAIN}.conf" 2>/dev/null || true
+        rm -f "/etc/nginx/sites-available/${DOMAIN}.conf" 2>/dev/null || true
+        rm -f /etc/supervisor/conf.d/${DOMAIN}-*.conf 2>/dev/null || true
+        rm -f "/etc/cron.d/${DOMAIN}-scheduler" 2>/dev/null || true
+        rm -f "$SITE_CONFIG" 2>/dev/null || true
+        nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
+    fi
+}
+trap cleanup_add_site EXIT
+
+# ---------------------------------------------------------------------------
 # 1. Create directory layout
 # ---------------------------------------------------------------------------
 log_info "Creating directory structure..."
@@ -89,14 +107,21 @@ chown -R deployer:deployer "$SITE_DIR"
 log_ok "Directory structure created"
 
 # ---------------------------------------------------------------------------
-# 2. PHP-FPM pool
+# 2. PHP-FPM pool (multi-site aware sizing)
 # ---------------------------------------------------------------------------
 log_info "Creating PHP-FPM pool..."
 
-# Calculate pool sizes based on available RAM
+# Calculate pool sizes based on available RAM and number of sites
 RAM_MB=$(free -m | awk '/^Mem:/ {print $2}')
-# Rough: each worker ~40MB, allocate 30% of RAM to this site's pool
-PM_MAX_CHILDREN=$(( RAM_MB * 30 / 100 / 40 ))
+site_count=1
+if [[ -d /etc/forge-lite ]]; then
+    site_count=$(( $(find /etc/forge-lite -maxdepth 1 -name '*.conf' 2>/dev/null | wc -l) + 1 ))
+fi
+ram_pct=$(( 70 / site_count ))
+[[ $ram_pct -gt 30 ]] && ram_pct=30
+[[ $ram_pct -lt 5 ]] && ram_pct=5
+# Rough: each worker ~40MB
+PM_MAX_CHILDREN=$(( RAM_MB * ram_pct / 100 / 40 ))
 [[ $PM_MAX_CHILDREN -lt 5 ]] && PM_MAX_CHILDREN=5
 PM_START_SERVERS=$(( PM_MAX_CHILDREN / 4 ))
 [[ $PM_START_SERVERS -lt 2 ]] && PM_START_SERVERS=2
@@ -130,7 +155,7 @@ ln -sf "/etc/nginx/sites-available/${DOMAIN}.conf" "/etc/nginx/sites-enabled/${D
 log_ok "NGINX vhost created"
 
 # ---------------------------------------------------------------------------
-# 4. MariaDB database + user
+# 4. MariaDB database + user (via mysql_safe — no password in ps)
 # ---------------------------------------------------------------------------
 log_info "Creating database..."
 
@@ -139,7 +164,7 @@ DB_NAME="$SITE_ID"
 DB_USER="$SITE_ID"
 DB_PASS=$(generate_password 32)
 
-mysql -u root -p"${ROOT_PASS}" <<MYSQL
+mysql_safe "${ROOT_PASS}" <<MYSQL
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
 GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
@@ -246,13 +271,14 @@ REDIS_PASSWORD=${REDIS_PASS}
 REDIS_PORT=6379
 ENV
 
-# Apply --env overrides
+# Apply --env overrides (with sed-safe escaping)
 for env_pair in "${EXTRA_ENV_VARS[@]+"${EXTRA_ENV_VARS[@]}"}"; do
     [[ -z "$env_pair" ]] && continue
     env_key="${env_pair%%=*}"
     env_val="${env_pair#*=}"
-    if grep -q "^${env_key}=" "${SITE_DIR}/shared/.env"; then
-        sed -i "s|^${env_key}=.*|${env_key}=${env_val}|" "${SITE_DIR}/shared/.env"
+    escaped_val=$(sed_escape_value "$env_val")
+    if grep -qF "${env_key}=" "${SITE_DIR}/shared/.env" && grep -q "^${env_key}=" "${SITE_DIR}/shared/.env"; then
+        sed -i "s|^${env_key}=.*|${env_key}=${escaped_val}|" "${SITE_DIR}/shared/.env"
     else
         echo "${env_key}=${env_val}" >> "${SITE_DIR}/shared/.env"
     fi
@@ -261,7 +287,8 @@ done
 # Generate APP_KEY if still empty
 if grep -q "^APP_KEY=$" "${SITE_DIR}/shared/.env"; then
     APP_KEY_VALUE="base64:$(openssl rand -base64 32)"
-    sed -i "s|^APP_KEY=.*|APP_KEY=${APP_KEY_VALUE}|" "${SITE_DIR}/shared/.env"
+    escaped_key=$(sed_escape_value "$APP_KEY_VALUE")
+    sed -i "s|^APP_KEY=.*|APP_KEY=${escaped_key}|" "${SITE_DIR}/shared/.env"
     log_info "APP_KEY auto-generated"
 fi
 
@@ -299,6 +326,9 @@ systemctl restart "php${PHP_VERSION}-fpm"
 nginx -t && systemctl reload nginx
 supervisorctl reread
 supervisorctl update
+
+# Mark success (disables cleanup trap)
+ADD_SITE_FAILED=false
 
 log_ok "=========================================="
 log_ok "  Site ${DOMAIN} added successfully!"

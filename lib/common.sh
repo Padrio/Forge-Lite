@@ -102,6 +102,53 @@ ensure_service() {
     esac
 }
 
+# retry <max_attempts> <delay_seconds> <command...>
+#   Retries a command up to max_attempts times with delay between attempts.
+retry() {
+    local max="${1:-3}" delay="${2:-5}"; shift 2
+    local attempt=1
+    while [[ $attempt -le $max ]]; do
+        if "$@"; then return 0; fi
+        log_warn "Attempt ${attempt}/${max} failed, retrying in ${delay}s..."
+        sleep "$delay"; ((attempt++))
+    done
+    return 1
+}
+
+# sed_escape_value <string>
+#   Escapes a string for safe use as a sed replacement value (pipe delimiter).
+sed_escape_value() {
+    printf '%s' "$1" | sed -e 's/[&/\|]/\\&/g'
+}
+
+# mysql_safe <root_password> [mysql_args...]
+#   Runs mysql with password via --defaults-extra-file (avoids ps aux exposure).
+mysql_safe() {
+    local root_pass="$1"; shift
+    local cnf
+    cnf="$(mktemp)"
+    chmod 600 "$cnf"
+    printf '[client]\nuser=root\npassword=%s\n' "$root_pass" > "$cnf"
+    mysql --defaults-extra-file="$cnf" "$@"
+    local rc=$?
+    rm -f "$cnf"
+    return $rc
+}
+
+# mysqldump_safe <root_password> [mysqldump_args...]
+#   Runs mysqldump with password via --defaults-extra-file (avoids ps aux exposure).
+mysqldump_safe() {
+    local root_pass="$1"; shift
+    local cnf
+    cnf="$(mktemp)"
+    chmod 600 "$cnf"
+    printf '[client]\nuser=root\npassword=%s\n' "$root_pass" > "$cnf"
+    mysqldump --defaults-extra-file="$cnf" "$@"
+    local rc=$?
+    rm -f "$cnf"
+    return $rc
+}
+
 # ensure_user <username> [shell] [home]
 #   Creates a system user if it does not already exist.
 ensure_user() {

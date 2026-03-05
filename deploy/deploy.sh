@@ -71,6 +71,13 @@ SITE_DIR="${SITE_DIR:-/home/deployer/sites/$DOMAIN}"
 PHP_VERSION="${PHP_VERSION:-8.3}"
 
 # ---------------------------------------------------------------------------
+# Deploy lock (prevent concurrent deployments)
+# ---------------------------------------------------------------------------
+LOCKFILE="/var/run/forge-lite-deploy-${DOMAIN}.lock"
+exec 200>"$LOCKFILE"
+flock -n 200 || die "Another deployment for ${DOMAIN} is already running."
+
+# ---------------------------------------------------------------------------
 # Deployment
 # ---------------------------------------------------------------------------
 RELEASE_ID=$(date +%Y%m%d_%H%M%S)
@@ -79,10 +86,34 @@ CURRENT_LINK="${SITE_DIR}/current"
 SHARED_DIR="${SITE_DIR}/shared"
 PHP_BIN="php${PHP_VERSION}"
 
+# ---------------------------------------------------------------------------
+# Cleanup trap — remove half-finished release + exit maintenance on failure
+# ---------------------------------------------------------------------------
+DEPLOY_FAILED=true
+cleanup_on_failure() {
+    if [[ "$DEPLOY_FAILED" == true ]]; then
+        log_warn "Deployment failed -- cleaning up..."
+        [[ -d "$RELEASE_DIR" ]] && rm -rf "$RELEASE_DIR"
+        if [[ -L "$CURRENT_LINK" ]] && [[ -f "${CURRENT_LINK}/artisan" ]]; then
+            cd "$CURRENT_LINK"
+            sudo -u deployer "$PHP_BIN" artisan up 2>/dev/null || true
+        fi
+    fi
+}
+trap cleanup_on_failure EXIT
+
 log_info "=========================================="
 log_info "  Deploying ${DOMAIN}"
 log_info "  Release: ${RELEASE_ID}"
 log_info "=========================================="
+
+# ---------------------------------------------------------------------------
+# Disk space check
+# ---------------------------------------------------------------------------
+avail_mb=$(df -BM "${SITE_DIR}" | awk 'NR==2 {print int($4)}')
+if [[ "$avail_mb" -lt 500 ]]; then
+    die "Insufficient disk space: ${avail_mb}MB available, 500MB minimum required."
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Create release directory
@@ -96,7 +127,7 @@ if [[ -n "$ARTIFACT" ]]; then
 else
     # Repo mode: git clone
     log_info "Cloning ${REPO} (branch: ${BRANCH})..."
-    git clone --depth 1 --branch "$BRANCH" "$REPO" "$RELEASE_DIR"
+    retry 3 5 timeout 300 git clone --depth 1 --branch "$BRANCH" "$REPO" "$RELEASE_DIR"
     rm -rf "${RELEASE_DIR}/.git"
 fi
 
@@ -118,7 +149,8 @@ ln -sfn "${SHARED_DIR}/storage" "${RELEASE_DIR}/storage"
 if grep -q "^APP_KEY=$" "${SHARED_DIR}/.env" 2>/dev/null; then
     log_info "Generating APP_KEY (first deployment)..."
     APP_KEY_VALUE="base64:$(openssl rand -base64 32)"
-    sed -i "s|^APP_KEY=.*|APP_KEY=${APP_KEY_VALUE}|" "${SHARED_DIR}/.env"
+    local_escaped_key=$(sed_escape_value "$APP_KEY_VALUE")
+    sed -i "s|^APP_KEY=.*|APP_KEY=${local_escaped_key}|" "${SHARED_DIR}/.env"
     log_ok "APP_KEY generated"
 fi
 
@@ -128,7 +160,7 @@ fi
 if [[ -n "$REPO" ]] || [[ ! -d "${RELEASE_DIR}/vendor" ]]; then
     log_info "Installing Composer dependencies..."
     cd "$RELEASE_DIR"
-    sudo -u deployer composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+    retry 3 5 timeout 600 sudo -u deployer composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 fi
 
 # ---------------------------------------------------------------------------
@@ -137,7 +169,7 @@ fi
 if [[ -n "$REPO" ]] && [[ -f "${RELEASE_DIR}/package.json" ]]; then
     log_info "Building frontend assets..."
     cd "$RELEASE_DIR"
-    sudo -u deployer npm ci
+    retry 3 5 timeout 300 sudo -u deployer npm ci
     sudo -u deployer npm run build
     # Remove node_modules to save disk space
     rm -rf "${RELEASE_DIR}/node_modules"
@@ -154,7 +186,31 @@ if [[ -L "$CURRENT_LINK" ]] && [[ -f "${CURRENT_LINK}/artisan" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Database migrations
+# 6. Pre-migration database backup
+# ---------------------------------------------------------------------------
+if [[ "$SKIP_MIGRATE" != true ]] && [[ -n "${DB_NAME:-}" ]]; then
+    log_info "Creating pre-migration database backup..."
+    backup_dir="/home/deployer/backups"
+    mkdir -p "$backup_dir"
+    backup_file="${backup_dir}/${DB_NAME}_pre_${RELEASE_ID}.sql.gz"
+    root_pass=""
+    root_pass=$(get_credential "MARIADB_ROOT_PASSWORD" 2>/dev/null) || true
+    if [[ -n "$root_pass" ]]; then
+        if mysql_safe "$root_pass" "$DB_NAME" --single-transaction -e "" 2>/dev/null; then
+            mysqldump_safe "$root_pass" "$DB_NAME" --single-transaction | gzip > "$backup_file" && \
+                log_ok "Pre-migration backup saved: ${backup_file}" || \
+                log_warn "Pre-migration backup failed (non-fatal)"
+            chown deployer:deployer "$backup_file" 2>/dev/null || true
+        else
+            log_warn "Could not connect to database for backup (non-fatal)"
+        fi
+    else
+        log_warn "No database root password found, skipping pre-migration backup"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Database migrations
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_MIGRATE" != true ]]; then
     log_info "Running migrations..."
@@ -163,23 +219,23 @@ if [[ "$SKIP_MIGRATE" != true ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Cache optimization
+# 8. Cache optimization
 # ---------------------------------------------------------------------------
 log_info "Optimizing caches..."
 cd "$RELEASE_DIR"
-sudo -u deployer "$PHP_BIN" artisan config:cache
-sudo -u deployer "$PHP_BIN" artisan route:cache
-sudo -u deployer "$PHP_BIN" artisan view:cache
-sudo -u deployer "$PHP_BIN" artisan event:cache
+sudo -u deployer "$PHP_BIN" artisan config:cache || log_warn "config:cache failed (non-fatal)"
+sudo -u deployer "$PHP_BIN" artisan route:cache  || log_warn "route:cache failed (non-fatal)"
+sudo -u deployer "$PHP_BIN" artisan view:cache   || log_warn "view:cache failed (non-fatal)"
+sudo -u deployer "$PHP_BIN" artisan event:cache  || log_warn "event:cache failed (non-fatal)"
 
 # ---------------------------------------------------------------------------
-# 8. Atomic symlink swap
+# 9. Atomic symlink swap
 # ---------------------------------------------------------------------------
 log_info "Swapping symlink..."
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 
 # ---------------------------------------------------------------------------
-# 9. Reload services
+# 10. Reload services
 # ---------------------------------------------------------------------------
 log_info "Reloading services..."
 systemctl reload "php${PHP_VERSION}-fpm"
@@ -199,14 +255,26 @@ for conf in /etc/supervisor/conf.d/${DOMAIN}-*.conf; do
 done
 
 # ---------------------------------------------------------------------------
-# 10. Exit maintenance mode
+# 11. Exit maintenance mode
 # ---------------------------------------------------------------------------
 log_info "Exiting maintenance mode..."
 cd "$RELEASE_DIR"
 sudo -u deployer "$PHP_BIN" artisan up
 
 # ---------------------------------------------------------------------------
-# 11. Cleanup old releases
+# 12. Health check
+# ---------------------------------------------------------------------------
+log_info "Running health check..."
+http_code=$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Host: ${DOMAIN}" --max-time 10 "http://127.0.0.1") || true
+if [[ "${http_code:-0}" -ge 200 && "${http_code:-0}" -lt 400 ]]; then
+    log_ok "Health check passed (HTTP ${http_code})"
+else
+    log_warn "Health check returned HTTP ${http_code:-timeout} -- verify manually"
+fi
+
+# ---------------------------------------------------------------------------
+# 13. Cleanup old releases
 # ---------------------------------------------------------------------------
 log_info "Cleaning up old releases (keeping ${KEEP})..."
 cd "${SITE_DIR}/releases"
@@ -216,6 +284,9 @@ ls -1dt */ 2>/dev/null | tail -n +$(( KEEP + 1 )) | while read -r old_release; d
     rm -rf "${SITE_DIR}/releases/${old_release}"
     log_info "Removed old release: ${old_release}"
 done
+
+# Mark deployment successful (disables cleanup trap)
+DEPLOY_FAILED=false
 
 log_ok "=========================================="
 log_ok "  Deployment complete!"

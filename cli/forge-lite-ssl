@@ -2,11 +2,19 @@
 # forge-lite CLI: forge-lite-ssl — SSL certificate management
 set -euo pipefail
 
-log_info()  { echo "[INFO]  $*" >&2; }
-log_ok()    { echo "[OK]    $*" >&2; }
-log_warn()  { echo "[WARN]  $*" >&2; }
-log_error() { echo "[ERROR] $*" >&2; }
-die() { log_error "$@"; exit 1; }
+# Source lib/common.sh if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/../lib/common.sh" ]]; then
+    export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    source "${FORGE_LITE_DIR}/lib/common.sh"
+else
+    # Minimal fallback for installed CLI
+    log_info()  { echo "[INFO]  $*" >&2; }
+    log_ok()    { echo "[OK]    $*" >&2; }
+    log_warn()  { echo "[WARN]  $*" >&2; }
+    log_error() { echo "[ERROR] $*" >&2; }
+    die() { log_error "$@"; exit 1; }
+fi
 
 [[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
 
