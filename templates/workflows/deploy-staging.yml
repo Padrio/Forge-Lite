@@ -11,7 +11,4 @@ jobs:
     with:
       environment: staging
       domain: staging.example.com  # TODO: Change to your staging domain
-    secrets:
-      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_USER: ${{ secrets.SSH_USER }}
+      runner-labels: 'self-hosted,forge-lite'  # Use 'self-hosted,forge-lite,staging' for multi-server

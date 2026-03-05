@@ -24,7 +24,7 @@ _forge_lite_complete() {
     }
 
     # Top-level commands
-    local commands="site deploy rollback db env ssl php provision update"
+    local commands="site deploy rollback runner db env ssl php provision update"
 
     case "$cword" in
         1)
@@ -107,6 +107,25 @@ _forge_lite_complete() {
         php)
             if [[ $cword -eq 2 ]]; then
                 COMPREPLY=($(compgen -W "8.1 8.2 8.3 8.4" -- "$cur"))
+            fi
+            ;;
+
+        runner)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "setup remove status" -- "$cur"))
+            elif [[ $cword -ge 3 ]]; then
+                case "${words[2]}" in
+                    setup)
+                        local flags="--repo= --token= --labels="
+                        COMPREPLY=($(compgen -W "$flags" -- "$cur"))
+                        [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
+                        ;;
+                    remove)
+                        local flags="--token="
+                        COMPREPLY=($(compgen -W "$flags" -- "$cur"))
+                        [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
+                        ;;
+                esac
             fi
             ;;
 

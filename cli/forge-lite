@@ -51,6 +51,10 @@ Commands:
     deploy setup <domain> [flags]     Configure repo-based deployments
     rollback <domain>                 Rollback to previous release
 
+    runner setup [flags]              Install self-hosted GitHub Actions runner
+    runner remove [flags]             Deregister and remove runner
+    runner status                     Show runner status
+
     db <subcommand> [args]            Database management
     env <subcommand> [args]           .env variable management
     ssl <subcommand> [args]           SSL certificate management
@@ -199,6 +203,42 @@ cmd_deploy_setup() {
 }
 
 # ---------------------------------------------------------------------------
+# runner commands
+# ---------------------------------------------------------------------------
+cmd_runner() {
+    [[ $# -ge 1 ]] || die "Usage: forge-lite runner <setup|remove|status> [args]"
+    local sub="$1"; shift
+
+    source "${FORGE_LITE_DIR}/server/modules/github-runner.sh"
+
+    case "$sub" in
+        setup)
+            provision_github_runner "$@"
+            ;;
+        remove)
+            remove_github_runner "$@"
+            ;;
+        status)
+            status_github_runner
+            ;;
+        -h|--help)
+            cat <<'USAGE'
+Usage: forge-lite runner <command> [args]
+
+Commands:
+    setup   --repo=URL --token=TOKEN [--labels=LABELS]   Install and register runner
+    remove  --token=TOKEN                                 Deregister and remove runner
+    status                                                Show runner status
+USAGE
+            exit 0
+            ;;
+        *)
+            die "Unknown runner command: $sub. Use setup, remove, or status."
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
 # update command
 # ---------------------------------------------------------------------------
 cmd_update() {
@@ -236,6 +276,8 @@ case "$1" in
         shift
         exec "${FORGE_LITE_DIR}/deploy/rollback.sh" "$@"
         ;;
+    runner)
+        shift; cmd_runner "$@" ;;
     db)
         shift
         exec forge-lite-db "$@"
