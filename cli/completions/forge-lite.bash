@@ -112,16 +112,16 @@ _forge_lite_complete() {
 
         runner)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=($(compgen -W "setup remove status" -- "$cur"))
+                COMPREPLY=($(compgen -W "setup remove status list" -- "$cur"))
             elif [[ $cword -ge 3 ]]; then
                 case "${words[2]}" in
                     setup)
-                        local flags="--repo= --token= --labels="
+                        local flags="--repo= --token= --name= --labels="
                         COMPREPLY=($(compgen -W "$flags" -- "$cur"))
                         [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
                         ;;
                     remove)
-                        local flags="--token="
+                        local flags="--name= --token="
                         COMPREPLY=($(compgen -W "$flags" -- "$cur"))
                         [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
                         ;;

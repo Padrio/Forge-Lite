@@ -51,9 +51,10 @@ Commands:
     deploy setup <domain> [flags]     Configure repo-based deployments
     rollback <domain>                 Rollback to previous release
 
-    runner setup [flags]              Install self-hosted GitHub Actions runner
-    runner remove [flags]             Deregister and remove runner
-    runner status                     Show runner status
+    runner setup [flags]              Add a self-hosted GitHub Actions runner
+    runner remove --name=N [flags]    Remove a specific runner
+    runner status                     Show all runners status
+    runner list                       Quick list of all runners
 
     db <subcommand> [args]            Database management
     env <subcommand> [args]           .env variable management
@@ -206,7 +207,7 @@ cmd_deploy_setup() {
 # runner commands
 # ---------------------------------------------------------------------------
 cmd_runner() {
-    [[ $# -ge 1 ]] || die "Usage: forge-lite runner <setup|remove|status> [args]"
+    [[ $# -ge 1 ]] || die "Usage: forge-lite runner <setup|remove|status|list> [args]"
     local sub="$1"; shift
 
     source "${FORGE_LITE_DIR}/server/modules/github-runner.sh"
@@ -221,19 +222,23 @@ cmd_runner() {
         status)
             status_github_runner
             ;;
+        list)
+            list_github_runners
+            ;;
         -h|--help)
             cat <<'USAGE'
 Usage: forge-lite runner <command> [args]
 
 Commands:
-    setup   --repo=URL --token=TOKEN [--labels=LABELS]   Install and register runner
-    remove  --token=TOKEN                                 Deregister and remove runner
-    status                                                Show runner status
+    setup   --repo=URL --token=TOKEN [--name=NAME] [--labels=LABELS]
+    remove  --name=NAME --token=TOKEN
+    status  Show detailed status of all runners
+    list    Quick tabular overview of all runners
 USAGE
             exit 0
             ;;
         *)
-            die "Unknown runner command: $sub. Use setup, remove, or status."
+            die "Unknown runner command: $sub. Use setup, remove, status, or list."
             ;;
     esac
 }

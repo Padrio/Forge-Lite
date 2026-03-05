@@ -117,23 +117,53 @@ sudo forge-lite rollback example.com
 
 ### 5. GitHub Actions (CI/CD)
 
-Deployments use a **self-hosted runner** on your server — no SSH secrets needed.
+Deployments use **self-hosted runners** on your server — no SSH secrets needed. Multiple runners can run on the same server (one per repo/environment).
 
-**Set up the runner (one-time):**
+**Set up a runner (per repo):**
 
 1. Go to your GitHub repo → Settings → Actions → Runners → **New self-hosted runner**
 2. Copy the registration token
 3. On your server:
    ```bash
    sudo forge-lite runner setup \
-     --repo=https://github.com/your-org/your-app \
+     --repo=git@github.com:your-org/your-app.git \
      --token=AXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
      --labels=forge-lite,production
    ```
+   The runner name is auto-derived from the repo (`your-app`), or set explicitly with `--name=myapp`. Both SSH and HTTPS repo URLs are supported.
+
 4. Verify the runner is online:
    ```bash
    sudo forge-lite runner status
+   sudo forge-lite runner list
    ```
+
+**Multiple runners on one server:**
+```bash
+# Production app
+sudo forge-lite runner setup \
+  --repo=git@github.com:org/app.git \
+  --token=TOKEN1 \
+  --name=app-production \
+  --labels=forge-lite,production
+
+# Staging app
+sudo forge-lite runner setup \
+  --repo=git@github.com:org/app.git \
+  --token=TOKEN2 \
+  --name=app-staging \
+  --labels=forge-lite,staging
+
+# Different repo
+sudo forge-lite runner setup \
+  --repo=git@github.com:org/other-app.git \
+  --token=TOKEN3
+```
+
+**Remove a runner:**
+```bash
+sudo forge-lite runner remove --name=app-staging --token=REMOVAL_TOKEN
+```
 
 **Configure workflows:**
 
@@ -183,9 +213,10 @@ sudo forge-lite update   # Reinstall CLI tools and bash completions
 
 ### forge-lite runner
 ```bash
-sudo forge-lite runner setup --repo=URL --token=TOKEN [--labels=LABELS]
-sudo forge-lite runner remove --token=TOKEN
+sudo forge-lite runner setup --repo=URL --token=TOKEN [--name=NAME] [--labels=LABELS]
+sudo forge-lite runner remove --name=NAME --token=TOKEN
 sudo forge-lite runner status
+sudo forge-lite runner list
 ```
 
 ## Site Management
