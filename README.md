@@ -34,13 +34,13 @@ tail -f /var/log/forge-lite-cloud-init.log
 
 ```bash
 git clone https://github.com/Padrio/Forge-Lite.git /opt/forge-lite
-cd /opt/forge-lite
+cd /opt/forge-lite/cli
 ```
 
 ### 2. Provision the server
 
 ```bash
-sudo forge-lite provision
+sudo ./forge-lite provision
 ```
 
 Options:
