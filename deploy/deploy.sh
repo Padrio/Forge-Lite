@@ -265,12 +265,23 @@ sudo -u deployer "$PHP_BIN" artisan up
 # 12. Health check
 # ---------------------------------------------------------------------------
 log_info "Running health check..."
-http_code=$(curl -s -o /dev/null -w '%{http_code}' \
+http_code=$(curl -4 -s -o /dev/null -w '%{http_code}' \
     -H "Host: ${DOMAIN}" --max-time 10 "http://127.0.0.1") || true
 if [[ "${http_code:-0}" -ge 200 && "${http_code:-0}" -lt 400 ]]; then
     log_ok "Health check passed (HTTP ${http_code})"
 else
     log_warn "Health check returned HTTP ${http_code:-timeout} -- verify manually"
+fi
+
+# IPv6 health check (non-blocking, only if server has IPv6)
+if has_ipv6 2>/dev/null; then
+    http_code_v6=$(curl -6 -s -o /dev/null -w '%{http_code}' \
+        -H "Host: ${DOMAIN}" --max-time 5 "http://[::1]") || true
+    if [[ "${http_code_v6:-0}" -ge 200 && "${http_code_v6:-0}" -lt 400 ]]; then
+        log_ok "IPv6 health check passed (HTTP ${http_code_v6})"
+    else
+        log_warn "IPv6 health check returned HTTP ${http_code_v6:-timeout}"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

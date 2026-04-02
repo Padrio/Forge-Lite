@@ -23,6 +23,27 @@ else
     sed_escape_value() {
         printf '%s' "$1" | sed -e 's/[&/\|]/\\&/g'
     }
+    get_server_ipv4() {
+        local ip
+        ip="$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null)" || true
+        if [[ -z "$ip" ]]; then
+            ip="$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)" || true
+        fi
+        printf '%s' "${ip:-}"
+    }
+    get_server_ipv6() {
+        local ip
+        ip="$(curl -6 -s --max-time 5 ifconfig.me 2>/dev/null)" || true
+        if [[ -z "$ip" ]]; then
+            ip="$(ip -6 addr show scope global 2>/dev/null | awk '/inet6 / {print $2}' | cut -d/ -f1 | head -1)" || true
+        fi
+        printf '%s' "${ip:-}"
+    }
+    has_ipv6() {
+        local ipv6
+        ipv6="$(get_server_ipv6)"
+        [[ -n "$ipv6" ]]
+    }
 fi
 
 [[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
@@ -309,6 +330,16 @@ cmd_status() {
             printf "  %-20s %s\n" "$svc" "stopped"
         fi
     done
+
+    echo ""
+    echo "--- Network ---"
+    local ipv4 ipv6 dual_stack="no"
+    ipv4=$(get_server_ipv4 2>/dev/null) || ipv4=""
+    ipv6=$(get_server_ipv6 2>/dev/null) || ipv6=""
+    [[ -n "$ipv4" && -n "$ipv6" ]] && dual_stack="yes"
+    printf "  %-14s %s\n" "IPv4:" "${ipv4:-not detected}"
+    printf "  %-14s %s\n" "IPv6:" "${ipv6:-not detected}"
+    printf "  %-14s %s\n" "Dual-Stack:" "$dual_stack"
 
     echo ""
     echo "--- Disk Usage ---"

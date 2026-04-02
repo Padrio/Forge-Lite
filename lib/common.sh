@@ -149,6 +149,37 @@ mysqldump_safe() {
     return $rc
 }
 
+# ---------------------------------------------------------------------------
+# Network helpers — IPv4/IPv6 detection
+# ---------------------------------------------------------------------------
+
+# get_server_ipv4 — returns the public IPv4 address or empty string
+get_server_ipv4() {
+    local ip
+    ip="$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null)" || true
+    if [[ -z "$ip" ]]; then
+        ip="$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)" || true
+    fi
+    printf '%s' "${ip:-}"
+}
+
+# get_server_ipv6 — returns the public IPv6 address or empty string
+get_server_ipv6() {
+    local ip
+    ip="$(curl -6 -s --max-time 5 ifconfig.me 2>/dev/null)" || true
+    if [[ -z "$ip" ]]; then
+        ip="$(ip -6 addr show scope global 2>/dev/null | awk '/inet6 / {print $2}' | cut -d/ -f1 | head -1)" || true
+    fi
+    printf '%s' "${ip:-}"
+}
+
+# has_ipv6 — returns 0 if server has a public/global IPv6 address
+has_ipv6() {
+    local ipv6
+    ipv6="$(get_server_ipv6)"
+    [[ -n "$ipv6" ]]
+}
+
 # ensure_user <username> [shell] [home]
 #   Creates a system user if it does not already exist.
 ensure_user() {

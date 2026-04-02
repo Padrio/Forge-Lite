@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # forge-lite/server/modules/swap.sh — Swap file, sysctl tuning, OOM priorities
+set -euo pipefail
+
 provision_swap() {
     log_info "=== Provisioning: Swap & Kernel Tuning ==="
 
@@ -29,16 +31,30 @@ provision_swap() {
     if [[ ! -f "$sysctl_file" ]]; then
         cat > "$sysctl_file" <<'SYSCTL'
 # forge-lite kernel tuning
+
+# Memory & file limits
 vm.swappiness = 30
 vm.overcommit_memory = 1
-net.core.somaxconn = 65535
-net.ipv4.tcp_tw_reuse = 1
 fs.file-max = 2097152
-net.ipv4.tcp_max_syn_backlog = 65535
+
+# Network — core
+net.core.somaxconn = 65535
 net.core.netdev_max_backlog = 65535
+
+# TCP tuning (net.ipv4.tcp_* applies to BOTH IPv4 and IPv6 in Linux 4.9+)
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_max_syn_backlog = 65535
+
+# IPv6 — ensure enabled and accepting Router Advertisements
+net.ipv6.conf.all.disable_ipv6 = 0
+net.ipv6.conf.default.disable_ipv6 = 0
+net.ipv6.conf.all.accept_ra = 1
+net.ipv6.conf.default.accept_ra = 1
+net.ipv6.conf.all.use_tempaddr = 0
+net.ipv6.conf.default.use_tempaddr = 0
 SYSCTL
         sysctl -p "$sysctl_file"
-        log_ok "Sysctl tuning applied"
+        log_ok "Sysctl tuning applied (IPv4 + IPv6)"
     fi
 
     # OOM score adjustments (lower = less likely to be killed)

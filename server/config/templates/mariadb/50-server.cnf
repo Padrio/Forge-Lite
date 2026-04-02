@@ -2,7 +2,7 @@
 
 [mysqld]
 # Network
-bind-address = 127.0.0.1
+bind-address = 127.0.0.1,::1
 port = 3306
 max_connections = 200
 

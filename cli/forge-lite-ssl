@@ -14,6 +14,27 @@ else
     log_warn()  { echo "[WARN]  $*" >&2; }
     log_error() { echo "[ERROR] $*" >&2; }
     die() { log_error "$@"; exit 1; }
+    get_server_ipv4() {
+        local ip
+        ip="$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null)" || true
+        if [[ -z "$ip" ]]; then
+            ip="$(ip -4 addr show scope global 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)" || true
+        fi
+        printf '%s' "${ip:-}"
+    }
+    get_server_ipv6() {
+        local ip
+        ip="$(curl -6 -s --max-time 5 ifconfig.me 2>/dev/null)" || true
+        if [[ -z "$ip" ]]; then
+            ip="$(ip -6 addr show scope global 2>/dev/null | awk '/inet6 / {print $2}' | cut -d/ -f1 | head -1)" || true
+        fi
+        printf '%s' "${ip:-}"
+    }
+    has_ipv6() {
+        local ipv6
+        ipv6="$(get_server_ipv6)"
+        [[ -n "$ipv6" ]]
+    }
 fi
 
 [[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
@@ -41,17 +62,30 @@ cmd_issue() {
     local domain="$1"
     [[ -n "$domain" ]] || die "Domain required."
 
-    # Check DNS resolution
-    local server_ip domain_ip
-    server_ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null) || server_ip=""
-    domain_ip=$(dig +short "$domain" A 2>/dev/null | head -1) || domain_ip=""
+    # Check DNS resolution (A + AAAA records)
+    local server_ipv4 server_ipv6 domain_ipv4 domain_ipv6
+    server_ipv4=$(get_server_ipv4 2>/dev/null) || server_ipv4=""
+    server_ipv6=$(get_server_ipv6 2>/dev/null) || server_ipv6=""
+    domain_ipv4=$(dig +short "$domain" A 2>/dev/null | head -1) || domain_ipv4=""
+    domain_ipv6=$(dig +short "$domain" AAAA 2>/dev/null | head -1) || domain_ipv6=""
 
-    if [[ -n "$server_ip" && -n "$domain_ip" && "$server_ip" != "$domain_ip" ]]; then
-        log_warn "DNS for '${domain}' points to ${domain_ip}, but this server is ${server_ip}"
-        log_warn "Certbot will likely fail. Point your A record to ${server_ip} first."
-    elif [[ -z "$domain_ip" ]]; then
-        log_warn "No DNS A record found for '${domain}'. Certbot will likely fail."
-        [[ -n "$server_ip" ]] && log_warn "Point your A record to ${server_ip}"
+    # Check A record
+    if [[ -n "$server_ipv4" && -n "$domain_ipv4" && "$server_ipv4" != "$domain_ipv4" ]]; then
+        log_warn "A record for '${domain}' points to ${domain_ipv4}, but this server is ${server_ipv4}"
+        log_warn "Certbot will likely fail. Point your A record to ${server_ipv4} first."
+    elif [[ -z "$domain_ipv4" ]]; then
+        log_warn "No A record found for '${domain}'. Certbot will likely fail."
+        [[ -n "$server_ipv4" ]] && log_warn "Point your A record to ${server_ipv4}"
+    fi
+
+    # Check AAAA record (only if server has IPv6)
+    if [[ -n "$server_ipv6" ]]; then
+        if [[ -n "$domain_ipv6" && "$server_ipv6" != "$domain_ipv6" ]]; then
+            log_warn "AAAA record for '${domain}' points to ${domain_ipv6}, but this server is ${server_ipv6}"
+        elif [[ -z "$domain_ipv6" ]]; then
+            log_info "No AAAA record for '${domain}'. IPv6 visitors won't reach this site."
+            log_info "Add an AAAA record pointing to ${server_ipv6} for full Dual-Stack."
+        fi
     fi
 
     # Issue certificate

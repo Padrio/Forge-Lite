@@ -44,6 +44,13 @@ provision_security() {
 
     # --- UFW ---
     ensure_packages ufw
+
+    # Ensure UFW processes IPv6 rules (defensive — Ubuntu default, but cloud images may differ)
+    if grep -q "^IPV6=no" /etc/default/ufw 2>/dev/null; then
+        sed -i "s|^IPV6=no|IPV6=yes|" /etc/default/ufw
+        log_info "Enabled IPv6 in UFW"
+    fi
+
     if ! ufw status | grep -q "Status: active"; then
         ufw default deny incoming
         ufw default allow outgoing
