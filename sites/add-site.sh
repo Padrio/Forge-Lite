@@ -235,6 +235,10 @@ if [[ "$SSL" == true ]]; then
             "DOMAIN=${DOMAIN}" \
             "FPM_SOCKET=${FPM_SOCKET}"
         log_ok "SSL certificate issued and vhost updated"
+    else
+        SSL=false
+        log_warn "SSL certificate was not obtained — site will use HTTP"
+        log_info "Enable SSL later with: forge-lite ssl issue ${DOMAIN}"
     fi
 fi
 
@@ -334,5 +338,8 @@ log_ok "=========================================="
 log_ok "  Site ${DOMAIN} added successfully!"
 log_ok "=========================================="
 log_info "Site directory: ${SITE_DIR}"
+if [[ "$SSL" == false ]]; then
+    log_info "SSL: not enabled. Add later with: forge-lite ssl issue ${DOMAIN}"
+fi
 log_info "Deploy with: deploy.sh ${DOMAIN} --repo=<url> --branch=main"
 log_info "Or from CI:  deploy.sh ${DOMAIN} --artifact=<path.tar.gz>"

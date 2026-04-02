@@ -24,6 +24,7 @@ Usage: forge-lite-ssl <command> <domain>
 
 Commands:
     issue <domain>    Obtain SSL certificate via Let's Encrypt
+    remove <domain>   Remove SSL and revert to HTTP
     renew <domain>    Force-renew certificate for domain
     status <domain>   Show certificate status and expiry
 USAGE
@@ -32,7 +33,6 @@ USAGE
 
 FORGE_LITE_TEMPLATES="/opt/forge-lite/server/config/templates"
 # Try to find templates relative to script location as fallback
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -d "${SCRIPT_DIR}/../server/config/templates" ]]; then
     FORGE_LITE_TEMPLATES="${SCRIPT_DIR}/../server/config/templates"
 fi
@@ -42,8 +42,16 @@ cmd_issue() {
     [[ -n "$domain" ]] || die "Domain required."
 
     # Check DNS resolution
-    if ! host "$domain" &>/dev/null; then
-        log_warn "DNS for '${domain}' may not be configured. Certbot might fail."
+    local server_ip domain_ip
+    server_ip=$(curl -s --max-time 5 ifconfig.me 2>/dev/null) || server_ip=""
+    domain_ip=$(dig +short "$domain" A 2>/dev/null | head -1) || domain_ip=""
+
+    if [[ -n "$server_ip" && -n "$domain_ip" && "$server_ip" != "$domain_ip" ]]; then
+        log_warn "DNS for '${domain}' points to ${domain_ip}, but this server is ${server_ip}"
+        log_warn "Certbot will likely fail. Point your A record to ${server_ip} first."
+    elif [[ -z "$domain_ip" ]]; then
+        log_warn "No DNS A record found for '${domain}'. Certbot will likely fail."
+        [[ -n "$server_ip" ]] && log_warn "Point your A record to ${server_ip}"
     fi
 
     # Issue certificate
@@ -52,37 +60,116 @@ cmd_issue() {
         -d "$domain" \
         --non-interactive \
         --agree-tos \
-        --register-unsafely-without-email \
-        --redirect
+        --register-unsafely-without-email
+
+    # Verify certificate was obtained
+    if [[ ! -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ]]; then
+        die "SSL certificate was not obtained. Verify DNS and try again."
+    fi
 
     # Switch nginx vhost to SSL variant if site config exists
     local site_conf="/etc/forge-lite/${domain}.conf"
     if [[ -f "$site_conf" ]]; then
-        # Read PHP version from site config
-        local php_version
         # shellcheck disable=SC1090
         source "$site_conf"
-        php_version="${PHP_VERSION:-8.3}"
-        local fpm_socket="/var/run/php/php${php_version}-${domain}-fpm.sock"
+        local php_version="${PHP_VERSION:-8.3}"
+        local fpm_socket="${FPM_SOCKET:-/var/run/php/php${php_version}-${domain}-fpm.sock}"
 
-        if [[ -f "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" ]]; then
-            # Simple sed-based template rendering
-            sed -e "s|{{DOMAIN}}|${domain}|g" \
-                -e "s|{{FPM_SOCKET}}|${fpm_socket}|g" \
-                "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" \
-                > "/etc/nginx/sites-available/${domain}.conf"
+        [[ -f "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" ]] || \
+            die "SSL vhost template not found: ${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf"
 
-            nginx -t && systemctl reload nginx
-            log_ok "NGINX vhost updated to SSL for ${domain}"
+        local tmp_vhost
+        tmp_vhost="$(mktemp)"
+        sed -e "s|{{DOMAIN}}|${domain}|g" \
+            -e "s|{{FPM_SOCKET}}|${fpm_socket}|g" \
+            "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" \
+            > "$tmp_vhost"
+        mv "$tmp_vhost" "/etc/nginx/sites-available/${domain}.conf"
+
+        nginx -t && systemctl reload nginx
+        log_ok "NGINX vhost updated to SSL for ${domain}"
+
+        # Update site config — replace existing SSL value
+        if grep -q "^SSL=" "$site_conf" 2>/dev/null; then
+            sed -i "s|^SSL=.*|SSL=true|" "$site_conf"
+        else
+            echo "SSL=true" >> "$site_conf"
         fi
 
-        # Update site config
-        if ! grep -q "^SSL=true" "$site_conf" 2>/dev/null; then
-            echo "SSL=true" >> "$site_conf"
+        # Update APP_URL in .env (escape dots for grep/sed regex safety)
+        local site_dir="${SITE_DIR:-/home/deployer/sites/${domain}}"
+        local env_file="${site_dir}/shared/.env"
+        local escaped_domain="${domain//./\\.}"
+        if [[ -f "$env_file" ]]; then
+            if grep -q "^APP_URL=http://${escaped_domain}" "$env_file" 2>/dev/null; then
+                sed -i "s|^APP_URL=http://${escaped_domain}|APP_URL=https://${domain}|" "$env_file"
+                log_ok "Updated APP_URL to https://${domain}"
+            fi
         fi
     fi
 
     log_ok "SSL certificate issued for ${domain}"
+}
+
+cmd_remove() {
+    local domain="$1"
+    [[ -n "$domain" ]] || die "Domain required."
+
+    local site_conf="/etc/forge-lite/${domain}.conf"
+    [[ -f "$site_conf" ]] || die "Site config not found: ${site_conf}"
+
+    # shellcheck disable=SC1090
+    source "$site_conf"
+
+    if [[ "${SSL:-false}" != "true" ]]; then
+        log_info "SSL is not enabled for ${domain}. Nothing to do."
+        return 0
+    fi
+
+    log_info "Removing SSL for ${domain}..."
+    log_warn "HSTS was active — browsers may enforce HTTPS for up to 1 year for returning visitors."
+
+    # Restore HTTP-only vhost
+    local php_version="${PHP_VERSION:-8.3}"
+    local fpm_socket="${FPM_SOCKET:-/var/run/php/php${php_version}-${domain}-fpm.sock}"
+
+    [[ -f "${FORGE_LITE_TEMPLATES}/nginx/vhost.conf" ]] || \
+        die "HTTP vhost template not found: ${FORGE_LITE_TEMPLATES}/nginx/vhost.conf"
+
+    local tmp_vhost
+    tmp_vhost="$(mktemp)"
+    sed -e "s|{{DOMAIN}}|${domain}|g" \
+        -e "s|{{FPM_SOCKET}}|${fpm_socket}|g" \
+        "${FORGE_LITE_TEMPLATES}/nginx/vhost.conf" \
+        > "$tmp_vhost"
+    mv "$tmp_vhost" "/etc/nginx/sites-available/${domain}.conf"
+
+    nginx -t && systemctl reload nginx
+    log_ok "NGINX vhost reverted to HTTP for ${domain}"
+
+    # Update site config
+    if grep -q "^SSL=" "$site_conf" 2>/dev/null; then
+        sed -i "s|^SSL=.*|SSL=false|" "$site_conf"
+    fi
+
+    # Update APP_URL in .env (escape dots for grep/sed regex safety)
+    local site_dir="${SITE_DIR:-/home/deployer/sites/${domain}}"
+    local env_file="${site_dir}/shared/.env"
+    local escaped_domain="${domain//./\\.}"
+    if [[ -f "$env_file" ]]; then
+        if grep -q "^APP_URL=https://${escaped_domain}" "$env_file" 2>/dev/null; then
+            sed -i "s|^APP_URL=https://${escaped_domain}|APP_URL=http://${domain}|" "$env_file"
+            log_ok "Reverted APP_URL to http://${domain}"
+        fi
+    fi
+
+    # Remove Let's Encrypt certificate
+    if [[ -d "/etc/letsencrypt/live/${domain}" ]]; then
+        certbot delete --cert-name "$domain" --non-interactive 2>/dev/null || \
+            log_warn "Could not remove certificate via certbot — clean up manually if needed"
+    fi
+
+    log_ok "SSL removed for ${domain}"
 }
 
 cmd_renew() {
@@ -117,6 +204,7 @@ cmd_status() {
 
 case "$1" in
     issue)  cmd_issue "${2:-}" ;;
+    remove) cmd_remove "${2:-}" ;;
     renew)  cmd_renew "${2:-}" ;;
     status) cmd_status "${2:-}" ;;
     -h|--help) usage ;;

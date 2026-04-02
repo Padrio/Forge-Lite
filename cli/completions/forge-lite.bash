@@ -98,7 +98,7 @@ _forge_lite_complete() {
 
         ssl)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=($(compgen -W "issue renew status" -- "$cur"))
+                COMPREPLY=($(compgen -W "issue remove renew status" -- "$cur"))
             elif [[ $cword -eq 3 ]]; then
                 COMPREPLY=($(compgen -W "$(_forge_lite_domains)" -- "$cur"))
             fi
