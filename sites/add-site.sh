@@ -253,6 +253,7 @@ if [[ "$SSL" == true ]]; then
         "${certbot_domains[@]}" \
         --non-interactive \
         --agree-tos \
+        --expand \
         --register-unsafely-without-email || log_warn "SSL issuance failed — site will work on HTTP only"
 
     if [[ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]]; then

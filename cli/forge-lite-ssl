@@ -111,6 +111,7 @@ cmd_issue() {
         "${certbot_domains[@]}" \
         --non-interactive \
         --agree-tos \
+        --expand \
         --register-unsafely-without-email
 
     # Verify certificate was obtained
