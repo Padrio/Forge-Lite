@@ -111,6 +111,7 @@ mkdir -p /etc/forge-lite/auth
 touch "/etc/forge-lite/auth/${DOMAIN}.conf"
 touch "/etc/forge-lite/auth/${DOMAIN}.htpasswd"
 chmod 644 "/etc/forge-lite/auth/${DOMAIN}.conf"
+chown root:www-data "/etc/forge-lite/auth/${DOMAIN}.htpasswd"
 chmod 640 "/etc/forge-lite/auth/${DOMAIN}.htpasswd"
 
 # ---------------------------------------------------------------------------

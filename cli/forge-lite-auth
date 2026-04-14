@@ -77,6 +77,7 @@ ensure_auth_files() {
     [[ -f "${AUTH_DIR}/${domain}.conf" ]] || touch "${AUTH_DIR}/${domain}.conf"
     [[ -f "${AUTH_DIR}/${domain}.htpasswd" ]] || touch "${AUTH_DIR}/${domain}.htpasswd"
     chmod 644 "${AUTH_DIR}/${domain}.conf"
+    chown root:www-data "${AUTH_DIR}/${domain}.htpasswd"
     chmod 640 "${AUTH_DIR}/${domain}.htpasswd"
 }
 
@@ -155,6 +156,7 @@ cmd_enable() {
         sed -i "/^${user}:/d" "$htpasswd_file"
     fi
     generate_htpasswd_entry "$user" "$password" >> "$htpasswd_file"
+    chown root:www-data "$htpasswd_file"
     chmod 640 "$htpasswd_file"
 
     # Write auth nginx config
@@ -234,6 +236,7 @@ cmd_add() {
     fi
 
     generate_htpasswd_entry "$user" "$password" >> "$htpasswd_file"
+    chown root:www-data "$htpasswd_file"
     chmod 640 "$htpasswd_file"
 
     store_credential "AUTH_${site_id}_${user}" "$password"
