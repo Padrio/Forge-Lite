@@ -244,7 +244,7 @@ if [[ "$SSL" == true ]]; then
     nginx -t && systemctl reload nginx
 
     # Build certbot -d flags for primary domain + aliases
-    local -a certbot_domains=(-d "$DOMAIN")
+    declare -a certbot_domains=(-d "$DOMAIN")
     for alias in "${ALIASES[@]+"${ALIASES[@]}"}"; do
         [[ -n "$alias" ]] && certbot_domains+=(-d "$alias")
     done
