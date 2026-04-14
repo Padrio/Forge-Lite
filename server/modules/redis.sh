@@ -23,6 +23,11 @@ provision_redis() {
         "REDIS_PASSWORD=${redis_pass}" \
         "MAXMEMORY=${max_memory_mb}mb"
 
+    # Redis runs as User=redis via systemd — config must be readable by redis user
+    # Use 640 (not 644) because the config contains the requirepass password
+    chown redis:redis /etc/redis/redis.conf
+    chmod 640 /etc/redis/redis.conf
+
     ensure_service redis-server restart
     log_ok "Redis provisioning complete"
 }

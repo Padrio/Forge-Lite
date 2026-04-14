@@ -37,4 +37,8 @@ render_template() {
     tmp_output=$(mktemp "${output}.XXXXXX")
     printf '%s\n' "$content" > "$tmp_output"
     mv -f "$tmp_output" "$output"
+
+    # mktemp creates files with 0600 — set sensible default for config files.
+    # Callers that need different permissions (e.g. redis.sh) set them explicitly after.
+    chmod 644 "$output"
 }

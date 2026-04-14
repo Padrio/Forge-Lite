@@ -119,6 +119,7 @@ cmd_issue() {
             "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" \
             > "$tmp_vhost"
         mv "$tmp_vhost" "/etc/nginx/sites-available/${domain}.conf"
+        chmod 644 "/etc/nginx/sites-available/${domain}.conf"
 
         nginx -t && systemctl reload nginx
         log_ok "NGINX vhost updated to SSL for ${domain}"
@@ -177,6 +178,7 @@ cmd_remove() {
         "${FORGE_LITE_TEMPLATES}/nginx/vhost.conf" \
         > "$tmp_vhost"
     mv "$tmp_vhost" "/etc/nginx/sites-available/${domain}.conf"
+    chmod 644 "/etc/nginx/sites-available/${domain}.conf"
 
     nginx -t && systemctl reload nginx
     log_ok "NGINX vhost reverted to HTTP for ${domain}"
