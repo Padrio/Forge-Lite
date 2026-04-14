@@ -101,7 +101,18 @@ cleanup_add_site() {
         rm -f "/etc/nginx/sites-available/${DOMAIN}.conf" 2>/dev/null || true
         rm -f /etc/supervisor/conf.d/${DOMAIN}-*.conf 2>/dev/null || true
         rm -f "/etc/cron.d/${DOMAIN}-scheduler" 2>/dev/null || true
+        rm -f "/etc/forge-lite/auth/${DOMAIN}.conf" 2>/dev/null || true
+        rm -f "/etc/forge-lite/auth/${DOMAIN}.htpasswd" 2>/dev/null || true
         rm -f "$SITE_CONFIG" 2>/dev/null || true
+        # Drop database and user if they were created in this run
+        if [[ -n "${ROOT_PASS:-}" && -n "${SITE_ID:-}" ]]; then
+            mysql_safe "${ROOT_PASS}" -e "DROP DATABASE IF EXISTS \`${SITE_ID}\`;" 2>/dev/null || true
+            mysql_safe "${ROOT_PASS}" -e "DROP USER IF EXISTS '${SITE_ID}'@'localhost';" 2>/dev/null || true
+        fi
+        # Remove site directory if it was created in this run
+        if [[ -d "${SITE_DIR}" ]]; then
+            rm -rf "${SITE_DIR}" 2>/dev/null || true
+        fi
         nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
     fi
 }
@@ -187,6 +198,7 @@ DB_PASS=$(generate_password 32)
 mysql_safe "${ROOT_PASS}" <<MYSQL
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
+ALTER USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
 GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 MYSQL
