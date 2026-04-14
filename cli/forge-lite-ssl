@@ -121,6 +121,14 @@ cmd_issue() {
         mv "$tmp_vhost" "/etc/nginx/sites-available/${domain}.conf"
         chmod 644 "/etc/nginx/sites-available/${domain}.conf"
 
+        # Ensure Basic Auth include is present
+        if ! grep -q 'forge-lite/auth/' "/etc/nginx/sites-available/${domain}.conf" 2>/dev/null; then
+            sed -i '/location \/ {/i\    # Basic Auth (managed by forge-lite auth)\n    include /etc/forge-lite/auth/'"${domain}"'.conf;' \
+                "/etc/nginx/sites-available/${domain}.conf"
+            mkdir -p /etc/forge-lite/auth
+            touch "/etc/forge-lite/auth/${domain}.conf"
+        fi
+
         nginx -t && systemctl reload nginx
         log_ok "NGINX vhost updated to SSL for ${domain}"
 
@@ -179,6 +187,14 @@ cmd_remove() {
         > "$tmp_vhost"
     mv "$tmp_vhost" "/etc/nginx/sites-available/${domain}.conf"
     chmod 644 "/etc/nginx/sites-available/${domain}.conf"
+
+    # Ensure Basic Auth include is present
+    if ! grep -q 'forge-lite/auth/' "/etc/nginx/sites-available/${domain}.conf" 2>/dev/null; then
+        sed -i '/location \/ {/i\    # Basic Auth (managed by forge-lite auth)\n    include /etc/forge-lite/auth/'"${domain}"'.conf;' \
+            "/etc/nginx/sites-available/${domain}.conf"
+        mkdir -p /etc/forge-lite/auth
+        touch "/etc/forge-lite/auth/${domain}.conf"
+    fi
 
     nginx -t && systemctl reload nginx
     log_ok "NGINX vhost reverted to HTTP for ${domain}"

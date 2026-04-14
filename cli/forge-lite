@@ -97,6 +97,7 @@ Commands:
     db <subcommand> [args]            Database management
     env <subcommand> [args]           .env variable management
     ssl <subcommand> [args]           SSL certificate management
+    auth <subcommand> <domain>        Basic Auth management (enable, disable, add, remove, list, status)
     php <version>                     Switch default PHP version
     provision [flags]                 Provision the server
     update                            Reinstall CLI tools and completions
@@ -287,7 +288,7 @@ USAGE
 # ---------------------------------------------------------------------------
 cmd_update() {
     local cli_dir="${FORGE_LITE_DIR}/cli"
-    local tools=(php-switch forge-lite-db forge-lite-ssl forge-lite-env forge-lite)
+    local tools=(php-switch forge-lite-db forge-lite-ssl forge-lite-env forge-lite-auth forge-lite)
 
     log_info "Reinstalling CLI tools from ${cli_dir} ..."
     for tool in "${tools[@]}"; do
@@ -348,15 +349,20 @@ cmd_status() {
     echo ""
     echo "--- Sites ---"
     if [[ -d "$SITE_CONFIG_DIR" ]] && ls "${SITE_CONFIG_DIR}"/*.conf &>/dev/null 2>&1; then
-        printf "  %-30s %-6s %-4s\n" "DOMAIN" "PHP" "SSL"
+        printf "  %-30s %-6s %-4s %-4s\n" "DOMAIN" "PHP" "SSL" "AUTH"
         for conf in "${SITE_CONFIG_DIR}"/*.conf; do
             (
                 # shellcheck disable=SC1090
                 source "$conf"
-                printf "  %-30s %-6s %-4s\n" \
+                local auth_status="no"
+                if [[ -f "/etc/forge-lite/auth/${DOMAIN:-}.conf" ]] && [[ -s "/etc/forge-lite/auth/${DOMAIN:-}.conf" ]]; then
+                    auth_status="yes"
+                fi
+                printf "  %-30s %-6s %-4s %-4s\n" \
                     "${DOMAIN:-unknown}" \
                     "${PHP_VERSION:-?}" \
-                    "${SSL:-no}"
+                    "${SSL:-no}" \
+                    "$auth_status"
             )
         done
     else
@@ -391,6 +397,10 @@ case "$1" in
     ssl)
         shift
         exec forge-lite-ssl "$@"
+        ;;
+    auth)
+        shift
+        exec forge-lite-auth "$@"
         ;;
     php)
         shift

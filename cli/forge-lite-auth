@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+# forge-lite CLI: forge-lite-auth — Basic Auth management for sites
+set -euo pipefail
+
+CREDENTIALS_FILE="/root/.forge-lite-credentials"
+AUTH_DIR="/etc/forge-lite/auth"
+
+# Source lib/common.sh if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/../lib/common.sh" ]]; then
+    export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    source "${FORGE_LITE_DIR}/lib/common.sh"
+    source "${FORGE_LITE_DIR}/lib/credentials.sh"
+    source "${FORGE_LITE_DIR}/lib/validation.sh"
+else
+    # Minimal fallback for installed CLI
+    log_info()  { echo "[INFO]  $*" >&2; }
+    log_ok()    { echo "[OK]    $*" >&2; }
+    log_warn()  { echo "[WARN]  $*" >&2; }
+    log_error() { echo "[ERROR] $*" >&2; }
+    die() { log_error "$@"; exit 1; }
+
+    generate_password() {
+        openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c "${1:-32}"
+    }
+
+    store_credential() {
+        local key="$1" value="$2"
+        if grep -qF "${key}=" "$CREDENTIALS_FILE" 2>/dev/null && grep -q "^${key}=" "$CREDENTIALS_FILE" 2>/dev/null; then
+            return 0
+        fi
+        echo "${key}=${value}" >> "$CREDENTIALS_FILE"
+        chmod 600 "$CREDENTIALS_FILE"
+    }
+
+    sanitize_for_identifier() {
+        printf '%s' "$1" | tr '.-' '_'
+    }
+fi
+
+[[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
+
+usage() {
+    cat <<'USAGE'
+Usage: forge-lite-auth <command> <domain> [options]
+
+Commands:
+    enable <domain> [--user=USER] [--password=PASS] [--realm=REALM]
+        Enable Basic Auth with an initial user (default: admin)
+
+    disable <domain>
+        Disable Basic Auth (preserves users for re-enable)
+
+    add <domain> --user=USER [--password=PASS]
+        Add a user to an existing Basic Auth setup
+
+    remove <domain> --user=USER
+        Remove a user from Basic Auth
+
+    list <domain>
+        List all Basic Auth users for a site
+
+    status <domain>
+        Show Basic Auth status for a site
+USAGE
+    exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# Ensure the auth directory and files exist for a domain
+ensure_auth_files() {
+    local domain="$1"
+    mkdir -p "$AUTH_DIR"
+    [[ -f "${AUTH_DIR}/${domain}.conf" ]] || touch "${AUTH_DIR}/${domain}.conf"
+    [[ -f "${AUTH_DIR}/${domain}.htpasswd" ]] || touch "${AUTH_DIR}/${domain}.htpasswd"
+    chmod 644 "${AUTH_DIR}/${domain}.conf"
+    chmod 640 "${AUTH_DIR}/${domain}.htpasswd"
+}
+
+# Inject the Basic Auth include into an existing vhost if missing
+ensure_vhost_include() {
+    local domain="$1"
+    local vhost="/etc/nginx/sites-available/${domain}.conf"
+
+    [[ -f "$vhost" ]] || return 0
+
+    if ! grep -q "forge-lite/auth/" "$vhost" 2>/dev/null; then
+        sed -i '/location \/ {/i\    # Basic Auth (managed by forge-lite auth)\n    include /etc/forge-lite/auth/'"${domain}"'.conf;' "$vhost"
+        log_info "Injected Basic Auth include into existing vhost"
+    fi
+}
+
+# Update BASIC_AUTH key in site config
+update_site_config() {
+    local domain="$1" value="$2"
+    local site_conf="/etc/forge-lite/${domain}.conf"
+
+    [[ -f "$site_conf" ]] || return 0
+
+    if grep -q "^BASIC_AUTH=" "$site_conf" 2>/dev/null; then
+        sed -i "s|^BASIC_AUTH=.*|BASIC_AUTH=${value}|" "$site_conf"
+    else
+        echo "BASIC_AUTH=${value}" >> "$site_conf"
+    fi
+}
+
+# Generate htpasswd entry using openssl (no apache2-utils needed)
+generate_htpasswd_entry() {
+    local user="$1" password="$2"
+    local hash
+    hash=$(openssl passwd -apr1 "$password")
+    printf '%s:%s\n' "$user" "$hash"
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+cmd_enable() {
+    local domain="" user="admin" password="" realm="Restricted"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --user=*)     user="${1#*=}" ;;
+            --password=*) password="${1#*=}" ;;
+            --realm=*)    realm="${1#*=}" ;;
+            -h|--help)    usage ;;
+            -*)           die "Unknown option: $1" ;;
+            *)            domain="$1" ;;
+        esac
+        shift
+    done
+
+    [[ -n "$domain" ]] || die "Domain is required."
+    [[ -f "/etc/forge-lite/${domain}.conf" ]] || die "Site config not found for ${domain}. Add the site first."
+
+    # Generate password if not provided
+    if [[ -z "$password" ]]; then
+        password=$(generate_password 16)
+    fi
+
+    local site_id
+    site_id=$(sanitize_for_identifier "$domain")
+
+    ensure_auth_files "$domain"
+    ensure_vhost_include "$domain"
+
+    # Add user to htpasswd if not already present
+    local htpasswd_file="${AUTH_DIR}/${domain}.htpasswd"
+    if grep -q "^${user}:" "$htpasswd_file" 2>/dev/null; then
+        log_info "User '${user}' already exists, updating password"
+        sed -i "/^${user}:/d" "$htpasswd_file"
+    fi
+    generate_htpasswd_entry "$user" "$password" >> "$htpasswd_file"
+    chmod 640 "$htpasswd_file"
+
+    # Write auth nginx config
+    cat > "${AUTH_DIR}/${domain}.conf" <<AUTHCONF
+auth_basic "${realm}";
+auth_basic_user_file ${AUTH_DIR}/${domain}.htpasswd;
+AUTHCONF
+    chmod 644 "${AUTH_DIR}/${domain}.conf"
+
+    # Test and reload nginx
+    if nginx -t 2>/dev/null; then
+        systemctl reload nginx
+    else
+        die "NGINX config test failed. Check your configuration."
+    fi
+
+    # Store credential and update site config
+    store_credential "AUTH_${site_id}_${user}" "$password"
+    update_site_config "$domain" "true"
+
+    log_ok "Basic Auth enabled for ${domain}"
+    log_info "  User:     ${user}"
+    log_info "  Password: ${password}"
+    log_info "  Realm:    ${realm}"
+}
+
+cmd_disable() {
+    local domain="$1"
+    [[ -n "$domain" ]] || die "Domain is required."
+    [[ -f "/etc/forge-lite/${domain}.conf" ]] || die "Site config not found for ${domain}."
+
+    # Empty the auth conf (preserve htpasswd for re-enable)
+    local auth_conf="${AUTH_DIR}/${domain}.conf"
+    if [[ -f "$auth_conf" ]]; then
+        : > "$auth_conf"
+    fi
+
+    if nginx -t 2>/dev/null; then
+        systemctl reload nginx
+    fi
+
+    update_site_config "$domain" "false"
+    log_ok "Basic Auth disabled for ${domain}"
+    log_info "Users preserved — run 'forge-lite auth enable ${domain}' to re-enable."
+}
+
+cmd_add() {
+    local domain="" user="" password=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --user=*)     user="${1#*=}" ;;
+            --password=*) password="${1#*=}" ;;
+            -h|--help)    usage ;;
+            -*)           die "Unknown option: $1" ;;
+            *)            domain="$1" ;;
+        esac
+        shift
+    done
+
+    [[ -n "$domain" ]] || die "Domain is required."
+    [[ -n "$user" ]] || die "User is required. Use --user=USERNAME"
+    [[ -f "/etc/forge-lite/${domain}.conf" ]] || die "Site config not found for ${domain}."
+
+    if [[ -z "$password" ]]; then
+        password=$(generate_password 16)
+    fi
+
+    local site_id
+    site_id=$(sanitize_for_identifier "$domain")
+
+    ensure_auth_files "$domain"
+
+    local htpasswd_file="${AUTH_DIR}/${domain}.htpasswd"
+    if grep -q "^${user}:" "$htpasswd_file" 2>/dev/null; then
+        die "User '${user}' already exists for ${domain}. Remove first to update."
+    fi
+
+    generate_htpasswd_entry "$user" "$password" >> "$htpasswd_file"
+    chmod 640 "$htpasswd_file"
+
+    store_credential "AUTH_${site_id}_${user}" "$password"
+
+    log_ok "User '${user}' added for ${domain}"
+    log_info "  Password: ${password}"
+}
+
+cmd_remove() {
+    local domain="" user=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --user=*)  user="${1#*=}" ;;
+            -h|--help) usage ;;
+            -*)        die "Unknown option: $1" ;;
+            *)         domain="$1" ;;
+        esac
+        shift
+    done
+
+    [[ -n "$domain" ]] || die "Domain is required."
+    [[ -n "$user" ]] || die "User is required. Use --user=USERNAME"
+
+    local htpasswd_file="${AUTH_DIR}/${domain}.htpasswd"
+    [[ -f "$htpasswd_file" ]] || die "No htpasswd file found for ${domain}."
+
+    if ! grep -q "^${user}:" "$htpasswd_file" 2>/dev/null; then
+        die "User '${user}' not found for ${domain}."
+    fi
+
+    sed -i "/^${user}:/d" "$htpasswd_file"
+    log_ok "User '${user}' removed from ${domain}"
+
+    # Auto-disable if no users remain
+    local remaining
+    remaining=$(grep -c '.' "$htpasswd_file" 2>/dev/null) || remaining=0
+    if [[ "$remaining" -eq 0 ]]; then
+        log_warn "No users remaining — disabling Basic Auth"
+        cmd_disable "$domain"
+    fi
+}
+
+cmd_list() {
+    local domain="$1"
+    [[ -n "$domain" ]] || die "Domain is required."
+
+    local htpasswd_file="${AUTH_DIR}/${domain}.htpasswd"
+    if [[ ! -f "$htpasswd_file" ]] || [[ ! -s "$htpasswd_file" ]]; then
+        echo "  No users configured for ${domain}."
+        return 0
+    fi
+
+    echo "Users for ${domain}:"
+    while IFS=: read -r username _; do
+        echo "  - ${username}"
+    done < "$htpasswd_file"
+}
+
+cmd_status() {
+    local domain="$1"
+    [[ -n "$domain" ]] || die "Domain is required."
+
+    local auth_conf="${AUTH_DIR}/${domain}.conf"
+    local htpasswd_file="${AUTH_DIR}/${domain}.htpasswd"
+    local enabled="disabled"
+    local user_count=0
+
+    if [[ -f "$auth_conf" ]] && [[ -s "$auth_conf" ]]; then
+        enabled="enabled"
+    fi
+
+    if [[ -f "$htpasswd_file" ]]; then
+        user_count=$(grep -c '.' "$htpasswd_file" 2>/dev/null) || user_count=0
+    fi
+
+    echo "Basic Auth for ${domain}: ${enabled}"
+    echo "  Users: ${user_count}"
+}
+
+# ---------------------------------------------------------------------------
+# Main dispatch
+# ---------------------------------------------------------------------------
+[[ $# -ge 1 ]] || usage
+
+case "$1" in
+    enable)  shift; cmd_enable "$@" ;;
+    disable) shift; cmd_disable "${1:-}" ;;
+    add)     shift; cmd_add "$@" ;;
+    remove)  shift; cmd_remove "$@" ;;
+    list)    shift; cmd_list "${1:-}" ;;
+    status)  shift; cmd_status "${1:-}" ;;
+    -h|--help) usage ;;
+    *)       die "Unknown command: $1. Run with --help for usage." ;;
+esac

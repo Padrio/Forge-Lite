@@ -99,9 +99,11 @@ fi
 # ---------------------------------------------------------------------------
 rm -f "/etc/nginx/sites-enabled/${DOMAIN}.conf"
 rm -f "/etc/nginx/sites-available/${DOMAIN}.conf"
+rm -f "/etc/forge-lite/auth/${DOMAIN}.conf"
+rm -f "/etc/forge-lite/auth/${DOMAIN}.htpasswd"
 if nginx -t 2>/dev/null; then
     systemctl reload nginx
-    log_info "Removed NGINX vhost"
+    log_info "Removed NGINX vhost and Basic Auth config"
 fi
 
 # ---------------------------------------------------------------------------

@@ -107,6 +107,7 @@ install -m 755 "${FORGE_LITE_DIR}/cli/php-switch" /usr/local/bin/php-switch
 install -m 755 "${FORGE_LITE_DIR}/cli/forge-lite-db" /usr/local/bin/forge-lite-db
 install -m 755 "${FORGE_LITE_DIR}/cli/forge-lite-ssl" /usr/local/bin/forge-lite-ssl
 install -m 755 "${FORGE_LITE_DIR}/cli/forge-lite-env" /usr/local/bin/forge-lite-env
+install -m 755 "${FORGE_LITE_DIR}/cli/forge-lite-auth" /usr/local/bin/forge-lite-auth
 install -m 755 "${FORGE_LITE_DIR}/cli/forge-lite" /usr/local/bin/forge-lite
 
 if [[ -d /etc/bash_completion.d ]]; then
@@ -117,8 +118,9 @@ fi
 # Deploy logrotate config
 cp "${FORGE_LITE_DIR}/server/config/templates/logrotate/forge-lite" /etc/logrotate.d/forge-lite
 
-# Create site config directory
+# Create site config and auth directories
 mkdir -p /etc/forge-lite
+mkdir -p /etc/forge-lite/auth
 
 # ---------------------------------------------------------------------------
 # Mark as provisioned

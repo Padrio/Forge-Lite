@@ -9,7 +9,8 @@ A lightweight, bash-based server provisioning and deployment system for Laravel 
 - **Zero-downtime deployments**: Atomic symlink swap with automatic rollback support
 - **CI/CD ready**: GitHub Actions workflows for automatic deployment on push
 - **Idempotent**: Every script is safe to re-run
-- **CLI tools**: Unified `forge-lite` command plus `forge-lite-db`, `forge-lite-ssl`, `forge-lite-env`, `php-switch`
+- **Basic Auth**: Password-protect any site with a single command — manage users, enable/disable without downtime
+- **CLI tools**: Unified `forge-lite` command plus `forge-lite-db`, `forge-lite-ssl`, `forge-lite-env`, `forge-lite-auth`, `php-switch`
 
 ## Prerequisites
 
@@ -198,6 +199,18 @@ sudo forge-lite-ssl renew example.com    # Force renew
 sudo forge-lite-ssl status example.com   # Show certificate info
 ```
 
+### forge-lite-auth
+```bash
+sudo forge-lite auth enable example.com                    # Enable with auto-generated admin password
+sudo forge-lite auth enable example.com --user=dev         # Custom username
+sudo forge-lite auth enable example.com --user=dev --password=secret --realm="Staging"
+sudo forge-lite auth add example.com --user=reviewer       # Add another user
+sudo forge-lite auth remove example.com --user=reviewer    # Remove a user
+sudo forge-lite auth list example.com                      # List all users
+sudo forge-lite auth status example.com                    # Show enabled/disabled + user count
+sudo forge-lite auth disable example.com                   # Disable (users preserved for re-enable)
+```
+
 ### forge-lite-env
 ```bash
 sudo forge-lite-env list example.com           # Show all .env variables
@@ -248,8 +261,10 @@ sudo forge-lite site remove example.com --keep-db --keep-files
 
 ### Configuration
 ```
-/etc/forge-lite/<domain>.conf     # Site configuration (KEY=VALUE)
-/root/.forge-lite-credentials     # Generated passwords (chmod 600)
+/etc/forge-lite/<domain>.conf         # Site configuration (KEY=VALUE)
+/etc/forge-lite/auth/<domain>.conf    # Basic Auth nginx directives (empty = disabled)
+/etc/forge-lite/auth/<domain>.htpasswd # Basic Auth user credentials
+/root/.forge-lite-credentials         # Generated passwords (chmod 600)
 ```
 
 ## What Gets Provisioned
