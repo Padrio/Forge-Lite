@@ -104,15 +104,24 @@ ensure_service() {
 
 # retry <max_attempts> <delay_seconds> <command...>
 #   Retries a command up to max_attempts times with delay between attempts.
+#   Ctrl+C (SIGINT, exit code 130) aborts immediately instead of retrying.
 retry() {
     local max="${1:-3}" delay="${2:-5}"; shift 2
-    local attempt=1
+    local attempt=1 rc=0
     while [[ $attempt -le $max ]]; do
-        if "$@"; then return 0; fi
-        log_warn "Attempt ${attempt}/${max} failed, retrying in ${delay}s..."
-        sleep "$delay"; ((attempt++))
+        rc=0
+        "$@" && return 0 || rc=$?
+        # SIGINT (130) or SIGTERM (143) — abort immediately
+        if [[ $rc -eq 130 || $rc -eq 143 ]]; then
+            return "$rc"
+        fi
+        if [[ $attempt -lt $max ]]; then
+            log_warn "Attempt ${attempt}/${max} failed, retrying in ${delay}s..."
+            sleep "$delay"
+        fi
+        ((attempt++))
     done
-    return 1
+    return "$rc"
 }
 
 # sed_escape_value <string>

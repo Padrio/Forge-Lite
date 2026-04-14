@@ -127,7 +127,7 @@ if [[ -n "$ARTIFACT" ]]; then
 else
     # Repo mode: git clone
     log_info "Cloning ${REPO} (branch: ${BRANCH})..."
-    retry 3 5 timeout 300 git clone --depth 1 --branch "$BRANCH" "$REPO" "$RELEASE_DIR"
+    retry 3 5 timeout 60 git clone --depth 1 --branch "$BRANCH" "$REPO" "$RELEASE_DIR"
     rm -rf "${RELEASE_DIR}/.git"
 fi
 
