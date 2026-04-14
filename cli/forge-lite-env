@@ -63,9 +63,16 @@ cmd_get() {
     local env_file
     env_file=$(resolve_env_path "$domain")
 
-    local line
+    local line value
     line=$(grep -F "${key}=" "$env_file" | grep "^${key}=" | head -1) || die "Variable '${key}' not found in .env"
-    echo "${line#*=}"
+    value="${line#*=}"
+    # Strip surrounding quotes if present
+    if [[ "$value" =~ ^\"(.*)\"$ ]]; then
+        value="${BASH_REMATCH[1]}"
+    elif [[ "$value" =~ ^\'(.*)\'$ ]]; then
+        value="${BASH_REMATCH[1]}"
+    fi
+    echo "$value"
 }
 
 cmd_set() {
@@ -77,13 +84,20 @@ cmd_set() {
     local env_file
     env_file=$(resolve_env_path "$domain")
 
+    # Quote value if it contains spaces, quotes, or special shell characters
+    local quoted_value="$value"
+    if [[ "$value" =~ [[:space:]\"\'\#\$\&\|\;\(\)\<\>\`\\] || -z "$value" ]]; then
+        # Escape existing double quotes inside the value, then wrap in double quotes
+        quoted_value="\"${value//\"/\\\"}\""
+    fi
+
     local escaped_val
-    escaped_val=$(sed_escape_value "$value")
+    escaped_val=$(sed_escape_value "$quoted_value")
     if grep -qF "${key}=" "$env_file" && grep -q "^${key}=" "$env_file"; then
         sed -i "s|^${key}=.*|${key}=${escaped_val}|" "$env_file"
         log_ok "Updated ${key}"
     else
-        echo "${key}=${value}" >> "$env_file"
+        echo "${key}=${quoted_value}" >> "$env_file"
         log_ok "Added ${key}"
     fi
 }
