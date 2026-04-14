@@ -22,6 +22,7 @@ ENABLE_SSR=false
 ENABLE_HORIZON=false
 ENABLE_SCHEDULER=true
 SSL=false
+declare -a ALIASES=()
 declare -a EXTRA_ENV_VARS=()
 
 usage() {
@@ -35,6 +36,7 @@ Options:
     --enable-ssr            Enable Inertia SSR process
     --enable-horizon        Enable Laravel Horizon (replaces queue workers)
     --no-scheduler          Disable Laravel scheduler cron
+    --alias=DOMAIN          Additional server name / domain alias (repeatable)
     --ssl                   Issue SSL certificate via Let's Encrypt
     --env=KEY=VALUE         Set extra .env variable (can be repeated)
     -h, --help              Show this help
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
         --enable-ssr)       ENABLE_SSR=true; shift ;;
         --enable-horizon)   ENABLE_HORIZON=true; shift ;;
         --no-scheduler)     ENABLE_SCHEDULER=false; shift ;;
+        --alias=*)          ALIASES+=("${1#*=}"); shift ;;
         --ssl)              SSL=true; shift ;;
         --env=*)            EXTRA_ENV_VARS+=("${1#*=}"); shift ;;
         -h|--help)          usage ;;
@@ -68,6 +71,14 @@ SITE_DIR="/home/deployer/sites/${DOMAIN}"
 FPM_SOCKET="/var/run/php/php${PHP_VERSION}-${DOMAIN}-fpm.sock"
 TEMPLATE_DIR="${FORGE_LITE_DIR}/server/config/templates"
 SITE_CONFIG="/etc/forge-lite/${DOMAIN}.conf"
+
+# Build server_name value (primary domain + aliases)
+SERVER_NAMES="$DOMAIN"
+ALIASES_CSV=""
+if [[ ${#ALIASES[@]} -gt 0 ]]; then
+    SERVER_NAMES="${DOMAIN} ${ALIASES[*]}"
+    ALIASES_CSV=$(IFS=,; echo "${ALIASES[*]}")
+fi
 
 # Check if site already exists
 if [[ -f "$SITE_CONFIG" ]]; then
@@ -156,6 +167,7 @@ log_info "Creating NGINX vhost..."
 render_template "${TEMPLATE_DIR}/nginx/vhost.conf" \
     "/etc/nginx/sites-available/${DOMAIN}.conf" \
     "DOMAIN=${DOMAIN}" \
+    "SERVER_NAMES=${SERVER_NAMES}" \
     "FPM_SOCKET=${FPM_SOCKET}"
 
 ln -sf "/etc/nginx/sites-available/${DOMAIN}.conf" "/etc/nginx/sites-enabled/${DOMAIN}.conf"
@@ -231,8 +243,14 @@ if [[ "$SSL" == true ]]; then
     # We need nginx running with the HTTP vhost first for the challenge
     nginx -t && systemctl reload nginx
 
+    # Build certbot -d flags for primary domain + aliases
+    local -a certbot_domains=(-d "$DOMAIN")
+    for alias in "${ALIASES[@]+"${ALIASES[@]}"}"; do
+        [[ -n "$alias" ]] && certbot_domains+=(-d "$alias")
+    done
+
     certbot certonly --nginx \
-        -d "$DOMAIN" \
+        "${certbot_domains[@]}" \
         --non-interactive \
         --agree-tos \
         --register-unsafely-without-email || log_warn "SSL issuance failed — site will work on HTTP only"
@@ -241,6 +259,7 @@ if [[ "$SSL" == true ]]; then
         render_template "${TEMPLATE_DIR}/nginx/vhost-ssl.conf" \
             "/etc/nginx/sites-available/${DOMAIN}.conf" \
             "DOMAIN=${DOMAIN}" \
+            "SERVER_NAMES=${SERVER_NAMES}" \
             "FPM_SOCKET=${FPM_SOCKET}"
         log_ok "SSL certificate issued and vhost updated"
     else
@@ -326,6 +345,7 @@ ENABLE_HORIZON=${ENABLE_HORIZON}
 ENABLE_SSR=${ENABLE_SSR}
 ENABLE_SCHEDULER=${ENABLE_SCHEDULER}
 SSL=${SSL}
+ALIASES=${ALIASES_CSV}
 CONF
 
 log_ok "Site config saved to ${SITE_CONFIG}"

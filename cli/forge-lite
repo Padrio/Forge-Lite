@@ -83,6 +83,7 @@ Commands:
     site add [flags]                  Add a new site
     site remove <domain> [flags]      Remove a site
     site list                         List all configured sites
+    site alias <domain> [flags]       Manage domain aliases (--add, --remove, --list)
 
     deploy <domain> [flags]           Deploy a site
     deploy setup <domain> [flags]     Configure repo-based deployments
@@ -112,7 +113,7 @@ USAGE
 # site commands
 # ---------------------------------------------------------------------------
 cmd_site() {
-    [[ $# -ge 1 ]] || die "Usage: forge-lite site <add|remove|list> [args]"
+    [[ $# -ge 1 ]] || die "Usage: forge-lite site <add|remove|list|alias> [args]"
     local sub="$1"; shift
 
     case "$sub" in
@@ -125,12 +126,15 @@ cmd_site() {
         list)
             cmd_site_list
             ;;
+        alias)
+            cmd_site_alias "$@"
+            ;;
         -h|--help)
-            echo "Usage: forge-lite site <add|remove|list> [args]"
+            echo "Usage: forge-lite site <add|remove|list|alias> [args]"
             exit 0
             ;;
         *)
-            die "Unknown site command: $sub. Use add, remove, or list."
+            die "Unknown site command: $sub. Use add, remove, list, or alias."
             ;;
     esac
 }
@@ -163,6 +167,127 @@ cmd_site_list() {
                 "${SSL:-no}"
         )
     done
+}
+
+# Helper: update the server_name line in an existing vhost config
+_update_vhost_server_names() {
+    local domain="$1" server_names="$2"
+    local vhost="/etc/nginx/sites-available/${domain}.conf"
+    [[ -f "$vhost" ]] || return 0
+
+    # Replace all server_name lines (HTTP redirect + main block)
+    sed -i "s|server_name .*\$|server_name ${server_names};|" "$vhost"
+}
+
+# Helper: read comma-separated ALIASES from site config into space-separated string
+_build_server_names() {
+    local domain="$1" aliases="${2:-}"
+    local server_names="$domain"
+    if [[ -n "$aliases" ]]; then
+        server_names="${domain} ${aliases//,/ }"
+    fi
+    printf '%s' "$server_names"
+}
+
+cmd_site_alias() {
+    local domain="" add_alias="" remove_alias="" list_only=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --add=*)    add_alias="${1#*=}" ;;
+            --remove=*) remove_alias="${1#*=}" ;;
+            --list)     list_only=true ;;
+            -h|--help)
+                echo "Usage: forge-lite site alias <domain> [--add=ALIAS | --remove=ALIAS | --list]"
+                exit 0
+                ;;
+            -*)         die "Unknown option: $1" ;;
+            *)          domain="$1" ;;
+        esac
+        shift
+    done
+
+    [[ -n "$domain" ]] || die "Domain is required."
+    local site_conf="${SITE_CONFIG_DIR}/${domain}.conf"
+    [[ -f "$site_conf" ]] || die "Site config not found: ${site_conf}"
+
+    # Read current aliases
+    local current_aliases=""
+    current_aliases=$(grep "^ALIASES=" "$site_conf" 2>/dev/null | head -1 | cut -d= -f2-) || true
+
+    if [[ "$list_only" == true ]]; then
+        local server_names
+        server_names=$(_build_server_names "$domain" "$current_aliases")
+        echo "Server names for ${domain}:"
+        echo "  Primary: ${domain}"
+        if [[ -n "$current_aliases" ]]; then
+            local IFS=','
+            for a in $current_aliases; do
+                echo "  Alias:   ${a}"
+            done
+        else
+            echo "  (no aliases)"
+        fi
+        return 0
+    fi
+
+    if [[ -n "$add_alias" ]]; then
+        # Check alias not already present
+        if [[ ",$current_aliases," == *",$add_alias,"* ]]; then
+            die "Alias '${add_alias}' already exists for ${domain}."
+        fi
+        # Append to aliases
+        if [[ -n "$current_aliases" ]]; then
+            current_aliases="${current_aliases},${add_alias}"
+        else
+            current_aliases="$add_alias"
+        fi
+        config_upsert "$site_conf" "ALIASES" "$current_aliases"
+
+        local server_names
+        server_names=$(_build_server_names "$domain" "$current_aliases")
+        _update_vhost_server_names "$domain" "$server_names"
+
+        if nginx -t 2>/dev/null; then
+            systemctl reload nginx
+        else
+            die "NGINX config test failed after adding alias."
+        fi
+        log_ok "Alias '${add_alias}' added for ${domain}"
+        log_info "Server names: ${server_names}"
+
+    elif [[ -n "$remove_alias" ]]; then
+        # Remove alias from comma-separated list
+        local new_aliases=""
+        local found=false
+        local IFS=','
+        for a in $current_aliases; do
+            if [[ "$a" == "$remove_alias" ]]; then
+                found=true
+            else
+                [[ -n "$new_aliases" ]] && new_aliases="${new_aliases},"
+                new_aliases="${new_aliases}${a}"
+            fi
+        done
+        unset IFS
+        [[ "$found" == true ]] || die "Alias '${remove_alias}' not found for ${domain}."
+
+        config_upsert "$site_conf" "ALIASES" "$new_aliases"
+
+        local server_names
+        server_names=$(_build_server_names "$domain" "$new_aliases")
+        _update_vhost_server_names "$domain" "$server_names"
+
+        if nginx -t 2>/dev/null; then
+            systemctl reload nginx
+        else
+            die "NGINX config test failed after removing alias."
+        fi
+        log_ok "Alias '${remove_alias}' removed from ${domain}"
+        log_info "Server names: ${server_names}"
+    else
+        die "Specify --add=ALIAS, --remove=ALIAS, or --list"
+    fi
 }
 
 # ---------------------------------------------------------------------------

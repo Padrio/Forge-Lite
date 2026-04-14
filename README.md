@@ -73,7 +73,16 @@ Options:
 --enable-horizon        Use Horizon instead of queue workers
 --no-scheduler          Disable Laravel scheduler
 --ssl                   Issue SSL certificate
+--alias=DOMAIN          Additional server name (repeatable)
 --env=KEY=VALUE         Extra .env variable (repeatable)
+```
+
+**Manage domain aliases (on existing sites):**
+```bash
+sudo forge-lite site alias example.com --add=www.example.com
+sudo forge-lite site alias example.com --add=app.example.com
+sudo forge-lite site alias example.com --list
+sudo forge-lite site alias example.com --remove=app.example.com
 ```
 
 ### 4. Deploy

@@ -38,21 +38,32 @@ _forge_lite_complete() {
     case "$cmd" in
         site)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=($(compgen -W "add remove list" -- "$cur"))
+                COMPREPLY=($(compgen -W "add remove list alias" -- "$cur"))
             elif [[ $cword -eq 3 ]]; then
                 case "${words[2]}" in
                     remove)
                         COMPREPLY=($(compgen -W "$(_forge_lite_domains)" -- "$cur"))
                         ;;
+                    alias)
+                        COMPREPLY=($(compgen -W "$(_forge_lite_domains)" -- "$cur"))
+                        ;;
                     add)
                         # Complete --flags with = suffix (no trailing space)
-                        local flags="--domain= --php= --queue-workers= --enable-ssr --enable-horizon --no-scheduler --ssl --env="
+                        local flags="--domain= --php= --queue-workers= --enable-ssr --enable-horizon --no-scheduler --alias= --ssl --env="
                         COMPREPLY=($(compgen -W "$flags" -- "$cur"))
                         [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
                         ;;
                 esac
+            elif [[ "${words[2]}" == "alias" ]]; then
+                if [[ $cword -eq 3 ]]; then
+                    COMPREPLY=($(compgen -W "$(_forge_lite_domains)" -- "$cur"))
+                else
+                    local flags="--add= --remove= --list"
+                    COMPREPLY=($(compgen -W "$flags" -- "$cur"))
+                    [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
+                fi
             elif [[ "${words[2]}" == "add" ]]; then
-                local flags="--domain= --php= --queue-workers= --enable-ssr --enable-horizon --no-scheduler --ssl --env="
+                local flags="--domain= --php= --queue-workers= --enable-ssr --enable-horizon --no-scheduler --alias= --ssl --env="
                 COMPREPLY=($(compgen -W "$flags" -- "$cur"))
                 [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
             fi

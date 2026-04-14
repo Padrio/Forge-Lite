@@ -88,10 +88,27 @@ cmd_issue() {
         fi
     fi
 
+    # Read aliases from site config if available
+    local site_aliases=""
+    local site_conf="/etc/forge-lite/${domain}.conf"
+    if [[ -f "$site_conf" ]]; then
+        site_aliases=$(grep "^ALIASES=" "$site_conf" 2>/dev/null | head -1 | cut -d= -f2-) || true
+    fi
+
+    # Build certbot -d flags for primary domain + aliases
+    local -a certbot_domains=(-d "$domain")
+    if [[ -n "$site_aliases" ]]; then
+        local IFS=','
+        for alias in $site_aliases; do
+            [[ -n "$alias" ]] && certbot_domains+=(-d "$alias")
+        done
+        unset IFS
+    fi
+
     # Issue certificate
     log_info "Requesting SSL certificate for ${domain}..."
     certbot certonly --nginx \
-        -d "$domain" \
+        "${certbot_domains[@]}" \
         --non-interactive \
         --agree-tos \
         --register-unsafely-without-email
@@ -112,9 +129,16 @@ cmd_issue() {
         [[ -f "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" ]] || \
             die "SSL vhost template not found: ${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf"
 
+        # Build server_names (primary + aliases)
+        local server_names="${domain}"
+        if [[ -n "${ALIASES:-}" ]]; then
+            server_names="${domain} ${ALIASES//,/ }"
+        fi
+
         local tmp_vhost
         tmp_vhost="$(mktemp)"
         sed -e "s|{{DOMAIN}}|${domain}|g" \
+            -e "s|{{SERVER_NAMES}}|${server_names}|g" \
             -e "s|{{FPM_SOCKET}}|${fpm_socket}|g" \
             "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" \
             > "$tmp_vhost"
@@ -179,9 +203,16 @@ cmd_remove() {
     [[ -f "${FORGE_LITE_TEMPLATES}/nginx/vhost.conf" ]] || \
         die "HTTP vhost template not found: ${FORGE_LITE_TEMPLATES}/nginx/vhost.conf"
 
+    # Build server_names (primary + aliases)
+    local server_names="${domain}"
+    if [[ -n "${ALIASES:-}" ]]; then
+        server_names="${domain} ${ALIASES//,/ }"
+    fi
+
     local tmp_vhost
     tmp_vhost="$(mktemp)"
     sed -e "s|{{DOMAIN}}|${domain}|g" \
+        -e "s|{{SERVER_NAMES}}|${server_names}|g" \
         -e "s|{{FPM_SOCKET}}|${fpm_socket}|g" \
         "${FORGE_LITE_TEMPLATES}/nginx/vhost.conf" \
         > "$tmp_vhost"
