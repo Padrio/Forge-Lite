@@ -60,6 +60,23 @@ provision_system() {
         log_info "Generated en_US.UTF-8 locale"
     fi
 
+    # Pre-populate SSH known_hosts for common Git hosts (GitHub, GitLab, Bitbucket)
+    # Prevents interactive "authenticity of host" prompts during git clone
+    for ssh_user_home in /root /home/deployer; do
+        local ssh_dir="${ssh_user_home}/.ssh"
+        local known_hosts="${ssh_dir}/known_hosts"
+        mkdir -p "$ssh_dir"
+        for host in github.com gitlab.com bitbucket.org; do
+            if ! grep -qF "$host" "$known_hosts" 2>/dev/null; then
+                ssh-keyscan -t ed25519,rsa "$host" >> "$known_hosts" 2>/dev/null || true
+            fi
+        done
+        chmod 700 "$ssh_dir"
+        chmod 644 "$known_hosts"
+    done
+    chown -R deployer:deployer /home/deployer/.ssh
+    log_info "SSH known_hosts populated for GitHub, GitLab, Bitbucket"
+
     # Open file limits
     ensure_line_in_file /etc/security/limits.conf "deployer soft nofile 65535" "deployer soft nofile"
     ensure_line_in_file /etc/security/limits.conf "deployer hard nofile 65535" "deployer hard nofile"
