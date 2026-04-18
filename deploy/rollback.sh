@@ -84,12 +84,13 @@ systemctl reload "php${PHP_VERSION}-fpm"
 supervisorctl reread >/dev/null 2>&1 || true
 supervisorctl update >/dev/null 2>&1 || true
 
-# Restart supervisor processes for this domain
+# Restart supervisor processes for this domain.
+# :* targets the full process group — required for numprocs>1.
 for conf in /etc/supervisor/conf.d/${DOMAIN}-*.conf; do
     if [[ -f "$conf" ]]; then
         local_name=$(basename "$conf" .conf)
-        if supervisorctl status "$local_name" 2>/dev/null | grep -qE "RUNNING|STOPPED|EXITED|FATAL"; then
-            supervisorctl restart "$local_name" 2>/dev/null || log_warn "Failed to restart ${local_name}"
+        if supervisorctl status "${local_name}:*" 2>/dev/null | grep -qE "RUNNING|STOPPED|EXITED|FATAL|BACKOFF"; then
+            supervisorctl restart "${local_name}:*" 2>/dev/null || log_warn "Failed to restart ${local_name}:*"
         fi
     fi
 done

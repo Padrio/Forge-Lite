@@ -78,7 +78,7 @@ log_info "Removing supervisor configs..."
 for conf in /etc/supervisor/conf.d/${DOMAIN}-*.conf; do
     if [[ -f "$conf" ]]; then
         local_name=$(basename "$conf" .conf)
-        supervisorctl stop "$local_name" 2>/dev/null || true
+        supervisorctl stop "${local_name}:*" 2>/dev/null || true
         rm -f "$conf"
         log_info "Removed ${conf}"
     fi
