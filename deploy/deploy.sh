@@ -196,7 +196,7 @@ if [[ "$SKIP_MIGRATE" != true ]] && [[ -n "${DB_NAME:-}" ]]; then
     root_pass=""
     root_pass=$(get_credential "MARIADB_ROOT_PASSWORD" 2>/dev/null) || true
     if [[ -n "$root_pass" ]]; then
-        if mysql_safe "$root_pass" "$DB_NAME" --single-transaction -e "" 2>/dev/null; then
+        if mysql_safe "$root_pass" "$DB_NAME" -e "SELECT 1" 2>/dev/null; then
             mysqldump_safe "$root_pass" "$DB_NAME" --single-transaction | gzip > "$backup_file" && \
                 log_ok "Pre-migration backup saved: ${backup_file}" || \
                 log_warn "Pre-migration backup failed (non-fatal)"
@@ -298,6 +298,24 @@ ls -1dt */ 2>/dev/null | tail -n +$(( KEEP + 1 )) | while read -r old_release; d
     rm -rf "${SITE_DIR}/releases/${old_release}"
     log_info "Removed old release: ${old_release}"
 done
+
+# ---------------------------------------------------------------------------
+# 14. Cleanup old pre-migration backups
+# ---------------------------------------------------------------------------
+if [[ -n "${DB_NAME:-}" ]]; then
+    backup_dir="/home/deployer/backups"
+    if [[ -d "$backup_dir" ]]; then
+        log_info "Cleaning up old pre-migration backups (keeping ${KEEP})..."
+        cd "$backup_dir"
+        # `|| true` guards pipefail: `ls` exits 2 when the glob has no matches
+        # (e.g. a fresh site with no prior pre-migration backups yet).
+        # shellcheck disable=SC2012
+        ls -1t "${DB_NAME}_pre_"*.sql.gz 2>/dev/null | tail -n +$(( KEEP + 1 )) | while read -r old_backup; do
+            rm -f "${backup_dir}/${old_backup}"
+            log_info "Removed old backup: ${old_backup}"
+        done || true
+    fi
+fi
 
 # Mark deployment successful (disables cleanup trap)
 DEPLOY_FAILED=false
