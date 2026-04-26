@@ -48,3 +48,50 @@ get_credential() {
     line=$(grep -F "${key}=" "$CREDENTIALS_FILE" 2>/dev/null | grep "^${key}=" | head -1) || return 1
     echo "${line#*=}"
 }
+
+# ---------------------------------------------------------------------------
+# resolve_mariadb_root_password
+#   Returns the MariaDB root password on stdout. Tries the stored credential
+#   first; if missing OR rejected by MariaDB, prompts interactively and offers
+#   to persist the new value. Dies if authentication still fails after a
+#   prompt.
+#
+#   Side effects:
+#     - chmod 600 on CREDENTIALS_FILE if it exists (idempotent perms fix)
+#     - may write a new MARIADB_ROOT_PASSWORD entry to CREDENTIALS_FILE
+#
+#   Logging goes to stderr; only the password is printed to stdout.
+# ---------------------------------------------------------------------------
+resolve_mariadb_root_password() {
+    local pw="" prompted=false ans
+
+    if [[ -f "$CREDENTIALS_FILE" ]]; then
+        chmod 600 "$CREDENTIALS_FILE" 2>/dev/null || true
+        if pw=$(get_credential "MARIADB_ROOT_PASSWORD"); then
+            if mysql_safe "$pw" -e 'SELECT 1' >/dev/null 2>&1; then
+                printf '%s' "$pw"
+                return 0
+            fi
+            log_warn "Stored MariaDB root password was rejected — re-prompting."
+        fi
+    fi
+
+    log_warn "MariaDB root password not available — prompting."
+    read -rsp "MariaDB root password: " pw
+    echo >&2
+    prompted=true
+
+    [[ -n "$pw" ]] || die "Empty password — aborting."
+    mysql_safe "$pw" -e 'SELECT 1' >/dev/null 2>&1 \
+        || die "MariaDB authentication failed."
+
+    if [[ "$prompted" == true ]]; then
+        read -rp "Save to ${CREDENTIALS_FILE}? [y/N] " ans
+        if [[ "$ans" =~ ^[Yy]$ ]]; then
+            store_credential "MARIADB_ROOT_PASSWORD" "$pw"
+            log_ok "Saved MARIADB_ROOT_PASSWORD to ${CREDENTIALS_FILE}"
+        fi
+    fi
+
+    printf '%s' "$pw"
+}
