@@ -509,6 +509,86 @@ Continue? [y/N] " "$assume_yes"
     log_ok "Sync complete: ${source_domain} → ${target_domain}"
 }
 
+cmd_shell() {
+    local domain=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                cat <<'USAGE'
+Usage: forge-lite-db shell <domain>
+  Opens a mysql client connected to the site's database.
+USAGE
+                return 0
+                ;;
+            --*)
+                die "Unknown option: $1" ;;
+            *)
+                if [[ -z "$domain" ]]; then domain="$1"
+                else die "Unexpected positional argument: $1"
+                fi
+                ;;
+        esac
+        shift
+    done
+
+    [[ -n "$domain" ]] || die "Usage: forge-lite-db shell <domain>"
+
+    local db_name root_pass
+    db_name=$(resolve_site_db "$domain")
+    root_pass=$(resolve_mariadb_root_password)
+
+    _db_exists "$root_pass" "$db_name" || die "DB '${db_name}' missing in MariaDB."
+
+    mysql_safe "$root_pass" --database "$db_name"
+}
+
+cmd_info() {
+    local domain=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                cat <<'USAGE'
+Usage: forge-lite-db info <domain>
+  Prints the site's database name, charset, collation, table count, and
+  size on stdout (machine-friendly, no log_* prefixes).
+USAGE
+                return 0
+                ;;
+            --*)
+                die "Unknown option: $1" ;;
+            *)
+                if [[ -z "$domain" ]]; then domain="$1"
+                else die "Unexpected positional argument: $1"
+                fi
+                ;;
+        esac
+        shift
+    done
+
+    [[ -n "$domain" ]] || die "Usage: forge-lite-db info <domain>"
+
+    local db_name root_pass
+    db_name=$(resolve_site_db "$domain")
+    root_pass=$(resolve_mariadb_root_password)
+
+    _db_exists "$root_pass" "$db_name" || die "DB '${db_name}' missing in MariaDB."
+
+    local result charset collation tables size_mb
+    result=$(mysql_safe "$root_pass" -N -B -e "
+        SELECT
+            (SELECT default_character_set_name FROM information_schema.schemata WHERE schema_name='${db_name}'),
+            (SELECT default_collation_name FROM information_schema.schemata WHERE schema_name='${db_name}'),
+            (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${db_name}'),
+            (SELECT IFNULL(ROUND(SUM(data_length+index_length)/1024/1024,1),0) FROM information_schema.tables WHERE table_schema='${db_name}');")
+    IFS=$'\t' read -r charset collation tables size_mb <<<"$result"
+
+    printf 'Database:  %s\n'   "$db_name"
+    printf 'Charset:   %s\n'   "$charset"
+    printf 'Collation: %s\n'   "$collation"
+    printf 'Tables:    %s\n'   "$tables"
+    printf 'Size:      %s MB\n' "$size_mb"
+}
+
 # Main dispatch
 [[ $# -ge 1 ]] || usage
 
