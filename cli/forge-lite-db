@@ -159,13 +159,14 @@ cmd_create() {
     local safe_name
     safe_name=$(echo "$name" | tr '.-' '_' | tr -cd 'a-zA-Z0-9_')
 
-    local db_pass
+    local root_pass db_pass
+    root_pass=$(resolve_mariadb_root_password)
     db_pass=$(generate_password 32)
 
-    mysql_safe "$ROOT_PASS" -e "CREATE DATABASE IF NOT EXISTS \`${safe_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-    mysql_safe "$ROOT_PASS" -e "CREATE USER IF NOT EXISTS '${safe_name}'@'localhost' IDENTIFIED BY '${db_pass}';"
-    mysql_safe "$ROOT_PASS" -e "GRANT ALL PRIVILEGES ON \`${safe_name}\`.* TO '${safe_name}'@'localhost';"
-    mysql_safe "$ROOT_PASS" -e "FLUSH PRIVILEGES;"
+    mysql_safe "$root_pass" -e "CREATE DATABASE IF NOT EXISTS \`${safe_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    mysql_safe "$root_pass" -e "CREATE USER IF NOT EXISTS '${safe_name}'@'localhost' IDENTIFIED BY '${db_pass}';"
+    mysql_safe "$root_pass" -e "GRANT ALL PRIVILEGES ON \`${safe_name}\`.* TO '${safe_name}'@'localhost';"
+    mysql_safe "$root_pass" -e "FLUSH PRIVILEGES;"
 
     store_credential "DB_${safe_name}_PASSWORD" "$db_pass"
 
@@ -187,15 +188,20 @@ cmd_drop() {
         [[ "$answer" =~ ^[Yy]$ ]] || { log_info "Aborted."; exit 0; }
     fi
 
-    mysql_safe "$ROOT_PASS" -e "DROP DATABASE IF EXISTS \`${safe_name}\`;"
-    mysql_safe "$ROOT_PASS" -e "DROP USER IF EXISTS '${safe_name}'@'localhost';"
-    mysql_safe "$ROOT_PASS" -e "FLUSH PRIVILEGES;"
+    local root_pass
+    root_pass=$(resolve_mariadb_root_password)
+
+    mysql_safe "$root_pass" -e "DROP DATABASE IF EXISTS \`${safe_name}\`;"
+    mysql_safe "$root_pass" -e "DROP USER IF EXISTS '${safe_name}'@'localhost';"
+    mysql_safe "$root_pass" -e "FLUSH PRIVILEGES;"
 
     log_ok "Database '${safe_name}' and user dropped"
 }
 
 cmd_list() {
-    mysql_safe "$ROOT_PASS" -e "SHOW DATABASES;" | tail -n +2 | grep -vE '^(information_schema|performance_schema|mysql|sys)$'
+    local root_pass
+    root_pass=$(resolve_mariadb_root_password)
+    mysql_safe "$root_pass" -e "SHOW DATABASES;" | tail -n +2 | grep -vE '^(information_schema|performance_schema|mysql|sys)$'
 }
 
 cmd_backup() {
@@ -207,11 +213,14 @@ cmd_backup() {
     local backup_dir="${2:-/home/deployer/backups}"
     mkdir -p "$backup_dir"
 
+    local root_pass
+    root_pass=$(resolve_mariadb_root_password)
+
     local timestamp
     timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_file="${backup_dir}/${safe_name}_${timestamp}.sql.gz"
 
-    mysqldump_safe "$ROOT_PASS" "$safe_name" --single-transaction | gzip > "$backup_file"
+    mysqldump_safe "$root_pass" "$safe_name" --single-transaction | gzip > "$backup_file"
     chown deployer:deployer "$backup_file" 2>/dev/null || true
 
     log_ok "Backup saved to ${backup_file}"
@@ -227,10 +236,13 @@ cmd_restore() {
     local safe_name
     safe_name=$(echo "$name" | tr '.-' '_' | tr -cd 'a-zA-Z0-9_')
 
+    local root_pass
+    root_pass=$(resolve_mariadb_root_password)
+
     if [[ "$file" == *.gz ]]; then
-        gunzip -c "$file" | mysql_safe "$ROOT_PASS" "$safe_name"
+        gunzip -c "$file" | mysql_safe "$root_pass" "$safe_name"
     else
-        mysql_safe "$ROOT_PASS" "$safe_name" < "$file"
+        mysql_safe "$root_pass" "$safe_name" < "$file"
     fi
 
     log_ok "Database '${safe_name}' restored from ${file}"
