@@ -153,6 +153,56 @@ USAGE
     exit 0
 }
 
+# ---------------------------------------------------------------------------
+# Internal helpers — used by domain-aware subcommands.
+# ---------------------------------------------------------------------------
+
+# _db_exists <root_pass> <db_name>
+#   Returns 0 if the schema exists, non-zero otherwise.
+_db_exists() {
+    local root_pass="$1" db_name="$2"
+    mysql_safe "$root_pass" -N -B -e \
+        "SELECT 1 FROM information_schema.schemata WHERE schema_name='${db_name}';" \
+        2>/dev/null | grep -q '^1$'
+}
+
+# _db_size_mb <root_pass> <db_name>
+#   Prints the size in MiB (one decimal). Prints "0.0" for empty / missing DBs.
+_db_size_mb() {
+    local root_pass="$1" db_name="$2"
+    mysql_safe "$root_pass" -N -B -e \
+        "SELECT IFNULL(ROUND(SUM(data_length+index_length)/1024/1024,1),0)
+         FROM information_schema.tables WHERE table_schema='${db_name}';" \
+        2>/dev/null
+}
+
+# _confirm_destructive <prompt> <assume_yes>
+#   Prompts for confirmation unless assume_yes == "true". Aborts with exit 0.
+_confirm_destructive() {
+    local prompt="$1" assume_yes="$2" ans
+    [[ "$assume_yes" == "true" ]] && return 0
+    read -rp "$prompt" ans
+    [[ "$ans" =~ ^[Yy]$ ]] || { log_info "Aborted."; exit 0; }
+}
+
+# _regrant_site_user <root_pass> <db_name> <site_id>
+#   After a DROP+CREATE we must re-grant the site user, otherwise the live
+#   site loses DB access. Site user password lives in DB_${SITE_ID}_PASSWORD
+#   (set by add-site.sh). Dies BEFORE issuing any GRANT if the password is
+#   missing — refuses to leave grants half-broken.
+_regrant_site_user() {
+    local root_pass="$1" db_name="$2" site_id="$3"
+    local site_pw
+    site_pw=$(get_credential "DB_${site_id}_PASSWORD") \
+        || die "Site password DB_${site_id}_PASSWORD not in credentials. Refusing to recreate database without restoring grants."
+    mysql_safe "$root_pass" <<MYSQL
+CREATE USER IF NOT EXISTS '${site_id}'@'localhost' IDENTIFIED BY '${site_pw}';
+ALTER USER '${site_id}'@'localhost' IDENTIFIED BY '${site_pw}';
+GRANT ALL PRIVILEGES ON \`${db_name}\`.* TO '${site_id}'@'localhost';
+FLUSH PRIVILEGES;
+MYSQL
+}
+
 cmd_create() {
     local name="$1"
     [[ -n "$name" ]] || die "Database name required."
