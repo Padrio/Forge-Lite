@@ -4,29 +4,49 @@ set -euo pipefail
 
 CREDENTIALS_FILE="/root/.forge-lite-credentials"
 
-# Source lib/common.sh if available (provides log_*, mysql_safe, etc.)
+# Source lib/common.sh, credentials.sh, validation.sh, sites.sh if available.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR}/../lib/common.sh" ]]; then
     export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
     source "${FORGE_LITE_DIR}/lib/common.sh"
     source "${FORGE_LITE_DIR}/lib/credentials.sh"
+    source "${FORGE_LITE_DIR}/lib/validation.sh"
+    source "${FORGE_LITE_DIR}/lib/sites.sh"
 else
-    # Minimal fallback for installed CLI
+    # Minimal fallback for installed CLI (no lib/ on disk).
     log_info()  { echo "[INFO]  $*" >&2; }
     log_ok()    { echo "[OK]    $*" >&2; }
+    log_warn()  { echo "[WARN]  $*" >&2; }
     log_error() { echo "[ERROR] $*" >&2; }
     die() { log_error "$@"; exit 1; }
 
+    SITE_CONFIG_DIR="${SITE_CONFIG_DIR:-/etc/forge-lite}"
+
+    validate_domain() {
+        local domain="$1"
+        if [[ ! "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$ ]]; then
+            die "Invalid domain name: ${domain}"
+        fi
+    }
+
+    sanitize_for_identifier() {
+        local input="$1"
+        echo "$input" | tr '.-' '_' | tr -cd 'a-zA-Z0-9_' | tr '[:upper:]' '[:lower:]'
+    }
+
     get_credential() {
         local key="$1"
-        [[ -f "$CREDENTIALS_FILE" ]] || die "Credentials file not found: ${CREDENTIALS_FILE}"
+        [[ -f "$CREDENTIALS_FILE" ]] || return 1
         local line
-        line=$(grep -F "${key}=" "$CREDENTIALS_FILE" | grep "^${key}=" | head -1) || die "Credential '${key}' not found."
+        line=$(grep -F "${key}=" "$CREDENTIALS_FILE" 2>/dev/null | grep "^${key}=" | head -1) || return 1
         echo "${line#*=}"
     }
 
     store_credential() {
         local key="$1" value="$2"
+        if [[ ! -f "$CREDENTIALS_FILE" ]]; then
+            install -m 600 /dev/null "$CREDENTIALS_FILE"
+        fi
         if grep -qF "${key}=" "$CREDENTIALS_FILE" 2>/dev/null && grep -q "^${key}=" "$CREDENTIALS_FILE" 2>/dev/null; then
             return 0
         fi
@@ -60,11 +80,64 @@ else
         rm -f "$cnf"
         return $rc
     }
+
+    resolve_mariadb_root_password() {
+        local pw="" prompted=false ans
+        if [[ -f "$CREDENTIALS_FILE" ]]; then
+            chmod 600 "$CREDENTIALS_FILE" 2>/dev/null || true
+            if pw=$(get_credential "MARIADB_ROOT_PASSWORD"); then
+                if mysql_safe "$pw" -e 'SELECT 1' >/dev/null 2>&1; then
+                    printf '%s' "$pw"
+                    return 0
+                fi
+                log_warn "Stored MariaDB root password was rejected — re-prompting."
+            fi
+        fi
+        log_warn "MariaDB root password not available — prompting."
+        read -rsp "MariaDB root password: " pw
+        echo >&2
+        prompted=true
+        [[ -n "$pw" ]] || die "Empty password — aborting."
+        mysql_safe "$pw" -e 'SELECT 1' >/dev/null 2>&1 \
+            || die "MariaDB authentication failed."
+        if [[ "$prompted" == true ]]; then
+            read -rp "Save to ${CREDENTIALS_FILE}? [y/N] " ans
+            if [[ "$ans" =~ ^[Yy]$ ]]; then
+                store_credential "MARIADB_ROOT_PASSWORD" "$pw"
+                log_ok "Saved MARIADB_ROOT_PASSWORD to ${CREDENTIALS_FILE}"
+            fi
+        fi
+        printf '%s' "$pw"
+    }
+
+    resolve_site_db() {
+        local domain="${1:-}"
+        [[ -n "$domain" ]] || die "Domain required."
+        validate_domain "$domain"
+        local conf="${SITE_CONFIG_DIR}/${domain}.conf"
+        if [[ ! -f "$conf" ]]; then
+            local f names=() available
+            for f in "${SITE_CONFIG_DIR}"/*.conf; do
+                [[ -f "$f" ]] || continue
+                f="${f##*/}"
+                names+=("${f%.conf}")
+            done
+            local IFS=,
+            available="${names[*]:-}"
+            die "Site '${domain}' not found. Available: ${available:-<none>}"
+        fi
+        local db_name
+        db_name=$(
+            # shellcheck disable=SC1090
+            source "$conf"
+            printf '%s' "${DB_NAME:-}"
+        )
+        [[ -n "$db_name" ]] || die "Site config '${conf}' lacks DB_NAME — old or manually edited."
+        printf '%s' "$db_name"
+    }
 fi
 
 [[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
-
-ROOT_PASS=$(get_credential "MARIADB_ROOT_PASSWORD")
 
 usage() {
     cat <<'USAGE'
