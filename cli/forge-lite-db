@@ -298,6 +298,67 @@ cmd_restore() {
     log_ok "Database '${safe_name}' restored from ${file}"
 }
 
+cmd_dump() {
+    local domain="" output="" gzip_enabled=true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --output=*)  output="${1#*=}" ;;
+            --no-gzip)   gzip_enabled=false ;;
+            -h|--help)
+                cat <<'USAGE'
+Usage: forge-lite-db dump <domain> [--output=PATH] [--no-gzip]
+  Dumps a site's database to disk. Default path:
+    /home/deployer/backups/<site_id>_<timestamp>.sql.gz
+  --output=PATH   Override destination path
+  --no-gzip       Write raw SQL (.sql) instead of gzipped (.sql.gz)
+USAGE
+                return 0
+                ;;
+            --*)         die "Unknown option: $1" ;;
+            *)
+                if [[ -z "$domain" ]]; then domain="$1"
+                else die "Unexpected positional argument: $1"
+                fi
+                ;;
+        esac
+        shift
+    done
+
+    [[ -n "$domain" ]] || die "Usage: forge-lite-db dump <domain> [--output=PATH] [--no-gzip]"
+
+    local db_name site_id root_pass
+    db_name=$(resolve_site_db "$domain")
+    site_id=$(sanitize_for_identifier "$domain")
+    root_pass=$(resolve_mariadb_root_password)
+
+    _db_exists "$root_pass" "$db_name" || die "DB '${db_name}' missing in MariaDB."
+
+    local backup_dir="/home/deployer/backups"
+    mkdir -p "$backup_dir"
+    chown deployer:deployer "$backup_dir" 2>/dev/null || true
+
+    local timestamp ext
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    ext=".sql"
+    [[ "$gzip_enabled" == true ]] && ext=".sql.gz"
+    [[ -n "$output" ]] || output="${backup_dir}/${site_id}_${timestamp}${ext}"
+
+    log_info "Dumping ${db_name} → ${output} (this may take a while)..."
+    if [[ "$gzip_enabled" == true ]]; then
+        mysqldump_safe "$root_pass" --single-transaction --quick --lock-tables=false "$db_name" \
+            | gzip > "$output"
+    else
+        mysqldump_safe "$root_pass" --single-transaction --quick --lock-tables=false "$db_name" \
+            > "$output"
+    fi
+    chown deployer:deployer "$output" 2>/dev/null || true
+
+    local size
+    size=$(du -h "$output" | cut -f1)
+    log_ok "Dump complete (size: ${size})"
+    echo "$output"
+}
+
 # Main dispatch
 [[ $# -ge 1 ]] || usage
 
