@@ -430,6 +430,85 @@ Continue? [y/N] " "$assume_yes"
     log_ok "Import complete"
 }
 
+cmd_sync() {
+    local source_domain="" target_domain="" assume_yes=false drop_enabled=true keep_dump=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes)            assume_yes=true ;;
+            --no-drop)        drop_enabled=false ;;
+            --keep-dump=*)    keep_dump="${1#*=}" ;;
+            -h|--help)
+                cat <<'USAGE'
+Usage: forge-lite-db sync <source-domain> <target-domain> [--yes] [--no-drop] [--keep-dump=PATH]
+  Copies one site's database into another's on the same server.
+  By default streams via pipe (no disk roundtrip); --keep-dump=PATH
+  writes a gzipped dump first, then imports from it.
+  --yes              Skip confirmation
+  --no-drop          Merge into target instead of drop+recreate
+  --keep-dump=PATH   Two-phase: dump source to PATH, then import from PATH
+USAGE
+                return 0
+                ;;
+            --*)              die "Unknown option: $1" ;;
+            *)
+                if   [[ -z "$source_domain" ]]; then source_domain="$1"
+                elif [[ -z "$target_domain" ]]; then target_domain="$1"
+                else die "Unexpected positional argument: $1"
+                fi
+                ;;
+        esac
+        shift
+    done
+
+    [[ -n "$source_domain" && -n "$target_domain" ]] || \
+        die "Usage: forge-lite-db sync <source-domain> <target-domain> [--yes] [--no-drop] [--keep-dump=PATH]"
+    [[ "$source_domain" != "$target_domain" ]] || die "Source and target must differ."
+
+    local src_db tgt_db tgt_id root_pass
+    src_db=$(resolve_site_db "$source_domain")
+    tgt_db=$(resolve_site_db "$target_domain")
+    tgt_id=$(sanitize_for_identifier "$target_domain")
+    root_pass=$(resolve_mariadb_root_password)
+
+    _db_exists "$root_pass" "$src_db" || die "Source DB '${src_db}' missing."
+    _db_exists "$root_pass" "$tgt_db" || die "Target DB '${tgt_db}' missing — run 'forge-lite site add' first."
+
+    local src_size tgt_size drop_msg
+    src_size=$(_db_size_mb "$root_pass" "$src_db")
+    tgt_size=$(_db_size_mb "$root_pass" "$tgt_db")
+    if [[ "$drop_enabled" == true ]]; then
+        drop_msg="DROP and recreate"
+    else
+        drop_msg="MERGE into (existing tables kept)"
+    fi
+
+    _confirm_destructive \
+        "WARNING: This will ${drop_msg} database '${tgt_db}' (current size: ${tgt_size} MB).
+Source '${source_domain}' DB '${src_db}' (${src_size} MB) will be copied.
+Continue? [y/N] " "$assume_yes"
+
+    if [[ "$drop_enabled" == true ]]; then
+        mysql_safe "$root_pass" -e "DROP DATABASE IF EXISTS \`${tgt_db}\`;"
+        mysql_safe "$root_pass" -e "CREATE DATABASE \`${tgt_db}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+        _regrant_site_user "$root_pass" "$tgt_db" "$tgt_id"
+    fi
+
+    if [[ -n "$keep_dump" ]]; then
+        log_info "Dumping ${src_db} → ${keep_dump}..."
+        mysqldump_safe "$root_pass" --single-transaction --quick --lock-tables=false "$src_db" \
+            | gzip > "$keep_dump"
+        chown deployer:deployer "$keep_dump" 2>/dev/null || true
+        log_info "Importing ${keep_dump} → ${tgt_db}..."
+        gunzip -c "$keep_dump" | mysql_safe "$root_pass" "$tgt_db"
+    else
+        log_info "Streaming ${src_db} → ${tgt_db} (this may take a while)..."
+        mysqldump_safe "$root_pass" --single-transaction --quick --lock-tables=false "$src_db" \
+            | mysql_safe "$root_pass" "$tgt_db"
+    fi
+
+    log_ok "Sync complete: ${source_domain} → ${target_domain}"
+}
+
 # Main dispatch
 [[ $# -ge 1 ]] || usage
 
