@@ -359,6 +359,77 @@ USAGE
     echo "$output"
 }
 
+cmd_import() {
+    local domain="" file="" assume_yes=false drop_enabled=true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes)       assume_yes=true ;;
+            --no-drop)   drop_enabled=false ;;
+            -h|--help)
+                cat <<'USAGE'
+Usage: forge-lite-db import <domain> <file> [--yes] [--no-drop]
+  Imports a SQL or SQL.gz dump into a site's database. By default
+  drops and recreates the database first (full reset). Use --no-drop
+  to merge into the existing schema.
+  --yes       Skip confirmation
+  --no-drop   Keep existing schema, merge imported tables on top
+USAGE
+                return 0
+                ;;
+            --*)         die "Unknown option: $1" ;;
+            *)
+                if   [[ -z "$domain" ]]; then domain="$1"
+                elif [[ -z "$file"   ]]; then file="$1"
+                else die "Unexpected positional argument: $1"
+                fi
+                ;;
+        esac
+        shift
+    done
+
+    [[ -n "$domain" && -n "$file" ]] || die "Usage: forge-lite-db import <domain> <file> [--yes] [--no-drop]"
+    [[ -r "$file" ]] || die "File not readable: ${file}"
+
+    local db_name site_id root_pass
+    db_name=$(resolve_site_db "$domain")
+    site_id=$(sanitize_for_identifier "$domain")
+    root_pass=$(resolve_mariadb_root_password)
+
+    local is_gzip=false
+    if [[ "$file" == *.gz ]]; then
+        gunzip -t "$file" 2>/dev/null || die "Corrupt gzip: ${file}"
+        is_gzip=true
+    fi
+
+    local current_size file_size drop_msg
+    current_size=$(_db_size_mb "$root_pass" "$db_name")
+    file_size=$(du -h "$file" | cut -f1)
+    if [[ "$drop_enabled" == true ]]; then
+        drop_msg="DROP and recreate"
+    else
+        drop_msg="MERGE into (existing tables kept)"
+    fi
+
+    _confirm_destructive \
+        "WARNING: This will ${drop_msg} database '${db_name}' (current size: ${current_size} MB).
+Source file '${file}' (${file_size}) will be imported.
+Continue? [y/N] " "$assume_yes"
+
+    if [[ "$drop_enabled" == true ]]; then
+        mysql_safe "$root_pass" -e "DROP DATABASE IF EXISTS \`${db_name}\`;"
+        mysql_safe "$root_pass" -e "CREATE DATABASE \`${db_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+        _regrant_site_user "$root_pass" "$db_name" "$site_id"
+    fi
+
+    log_info "Importing ${file} → ${db_name} (this may take a while)..."
+    if [[ "$is_gzip" == true ]]; then
+        gunzip -c "$file" | mysql_safe "$root_pass" "$db_name"
+    else
+        mysql_safe "$root_pass" "$db_name" < "$file"
+    fi
+    log_ok "Import complete"
+}
+
 # Main dispatch
 [[ $# -ge 1 ]] || usage
 
