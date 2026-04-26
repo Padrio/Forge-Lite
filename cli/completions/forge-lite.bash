@@ -95,7 +95,40 @@ _forge_lite_complete() {
 
         db)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=($(compgen -W "create drop list backup restore" -- "$cur"))
+                COMPREPLY=($(compgen -W "create drop list backup restore dump import sync shell info" -- "$cur"))
+            elif [[ $cword -eq 3 ]]; then
+                case "${words[2]}" in
+                    dump|import|sync|shell|info|drop|backup|restore)
+                        COMPREPLY=($(compgen -W "$(_forge_lite_domains)" -- "$cur"))
+                        ;;
+                esac
+            elif [[ $cword -eq 4 ]]; then
+                case "${words[2]}" in
+                    sync)
+                        COMPREPLY=($(compgen -W "$(_forge_lite_domains)" -- "$cur"))
+                        ;;
+                    import|restore)
+                        compopt -o default
+                        COMPREPLY=()
+                        ;;
+                    dump)
+                        local flags="--output= --no-gzip"
+                        COMPREPLY=($(compgen -W "$flags" -- "$cur"))
+                        [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
+                        ;;
+                esac
+            elif [[ $cword -ge 5 ]]; then
+                case "${words[2]}" in
+                    import)
+                        local flags="--yes --no-drop"
+                        COMPREPLY=($(compgen -W "$flags" -- "$cur"))
+                        ;;
+                    sync)
+                        local flags="--yes --no-drop --keep-dump="
+                        COMPREPLY=($(compgen -W "$flags" -- "$cur"))
+                        [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
+                        ;;
+                esac
             fi
             ;;
 
