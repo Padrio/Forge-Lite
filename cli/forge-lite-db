@@ -143,12 +143,22 @@ usage() {
     cat <<'USAGE'
 Usage: forge-lite-db <command> [args]
 
-Commands:
-    create <name>           Create database + user with auto-generated password
-    drop <name> [--yes]     Drop database and user
-    list                    List all databases
-    backup <name> [path]    Dump database to file (default: /home/deployer/backups/)
-    restore <name> <file>   Restore database from SQL dump
+Commands (raw, name-based):
+    create <name>                        Create database + user with auto-generated password
+    drop <name> [--yes]                  Drop database and user
+    list                                 List all databases
+    backup <name> [path]                 Dump database to file
+    restore <name> <file>                Restore database from SQL dump
+
+Commands (domain-aware):
+    dump <domain> [--output=PATH] [--no-gzip]
+                                         Dump a site's database (default: gzipped)
+    import <domain> <file> [--yes] [--no-drop]
+                                         Import SQL/SQL.gz into a site's database
+    sync <source-domain> <target-domain> [--yes] [--no-drop] [--keep-dump=PATH]
+                                         Copy one site's database to another (same server)
+    shell <domain>                       Open mysql client connected to a site's database
+    info <domain>                        Show DB name, size, table count, charset, collation
 USAGE
     exit 0
 }
@@ -593,11 +603,16 @@ USAGE
 [[ $# -ge 1 ]] || usage
 
 case "$1" in
-    create)  cmd_create "${2:-}" ;;
-    drop)    cmd_drop "${2:-}" "${3:-}" ;;
-    list)    cmd_list ;;
-    backup)  cmd_backup "${2:-}" "${3:-}" ;;
-    restore) cmd_restore "${2:-}" "${3:-}" ;;
+    create)  shift; cmd_create  "${1:-}" ;;
+    drop)    shift; cmd_drop    "${1:-}" "${2:-}" ;;
+    list)    shift; cmd_list ;;
+    backup)  shift; cmd_backup  "${1:-}" "${2:-}" ;;
+    restore) shift; cmd_restore "${1:-}" "${2:-}" ;;
+    dump)    shift; cmd_dump    "$@" ;;
+    import)  shift; cmd_import  "$@" ;;
+    sync)    shift; cmd_sync    "$@" ;;
+    shell)   shift; cmd_shell   "$@" ;;
+    info)    shift; cmd_info    "$@" ;;
     -h|--help) usage ;;
     *)       die "Unknown command: $1. Run with --help for usage." ;;
 esac
