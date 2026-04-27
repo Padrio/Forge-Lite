@@ -2,19 +2,37 @@
 # forge-lite CLI: forge-lite-env — .env variable management (list|get|set|delete)
 set -euo pipefail
 
-# Source lib/common.sh if available (provides log_*, sed_escape_value, etc.)
+# Source lib/common.sh if available (provides log_*, sed_escape_value,
+# format_dotenv_value, etc.). Try the script-relative path first (repo
+# checkout); fall back to /opt/forge-lite (installed layout).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR}/../lib/common.sh" ]]; then
     export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
     source "${FORGE_LITE_DIR}/lib/common.sh"
+elif [[ -f /opt/forge-lite/lib/common.sh ]]; then
+    export FORGE_LITE_DIR=/opt/forge-lite
+    source /opt/forge-lite/lib/common.sh
 else
-    # Minimal fallback for installed CLI
+    # Minimal fallback for installed CLI without lib/ available
     log_info()  { echo "[INFO]  $*" >&2; }
     log_ok()    { echo "[OK]    $*" >&2; }
     log_error() { echo "[ERROR] $*" >&2; }
     die() { log_error "$@"; exit 1; }
     sed_escape_value() {
         printf '%s' "$1" | sed -e 's/[&/\|]/\\&/g'
+    }
+    format_dotenv_value() {
+        local value="$1"
+        if [[ "$value" =~ ^\"(.*)\"$ ]]; then
+            value="${BASH_REMATCH[1]}"
+        elif [[ "$value" =~ ^\'(.*)\'$ ]]; then
+            value="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$value" =~ [[:space:]\"\'\#\$\&\|\;\(\)\<\>\`\\] || -z "$value" ]]; then
+            printf '"%s"' "${value//\"/\\\"}"
+        else
+            printf '%s' "$value"
+        fi
     }
 fi
 
@@ -84,16 +102,10 @@ cmd_set() {
     local env_file
     env_file=$(resolve_env_path "$domain")
 
-    # Quote value if it contains spaces, quotes, or special shell characters
-    local quoted_value="$value"
-    if [[ "$value" =~ [[:space:]\"\'\#\$\&\|\;\(\)\<\>\`\\] || -z "$value" ]]; then
-        # Escape existing double quotes inside the value, then wrap in double quotes
-        quoted_value="\"${value//\"/\\\"}\""
-    fi
-
-    local escaped_val
+    local quoted_value escaped_val
+    quoted_value=$(format_dotenv_value "$value")
     escaped_val=$(sed_escape_value "$quoted_value")
-    if grep -qF "${key}=" "$env_file" && grep -q "^${key}=" "$env_file"; then
+    if grep -q "^${key}=" "$env_file"; then
         sed -i "s|^${key}=.*|${key}=${escaped_val}|" "$env_file"
         log_ok "Updated ${key}"
     else

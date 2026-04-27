@@ -130,6 +130,30 @@ sed_escape_value() {
     printf '%s' "$1" | sed -e 's/[&/\|]/\\&/g'
 }
 
+# format_dotenv_value <value>
+#   Formats a value for safe inclusion in a Laravel/PHP dotenv (.env) file.
+#   - Strips a single layer of matching surrounding quotes if present (forgives
+#     users who pass --env='KEY="value with spaces"' where the shell preserves
+#     the inner quotes).
+#   - Wraps the value in double quotes when it contains characters that would
+#     break the dotenv parser (whitespace, quotes, '#' comment marker, shell
+#     metacharacters) or when the value is empty.
+#   - Escapes embedded double quotes inside the value.
+#   Output goes to stdout; caller is responsible for any further sed-escaping.
+format_dotenv_value() {
+    local value="$1"
+    if [[ "$value" =~ ^\"(.*)\"$ ]]; then
+        value="${BASH_REMATCH[1]}"
+    elif [[ "$value" =~ ^\'(.*)\'$ ]]; then
+        value="${BASH_REMATCH[1]}"
+    fi
+    if [[ "$value" =~ [[:space:]\"\'\#\$\&\|\;\(\)\<\>\`\\] || -z "$value" ]]; then
+        printf '"%s"' "${value//\"/\\\"}"
+    else
+        printf '%s' "$value"
+    fi
+}
+
 # mysql_safe <root_password> [mysql_args...]
 #   Runs mysql with password via --defaults-extra-file (avoids ps aux exposure).
 mysql_safe() {

@@ -323,16 +323,18 @@ REDIS_PASSWORD=${REDIS_PASS}
 REDIS_PORT=6379
 ENV
 
-# Apply --env overrides (with sed-safe escaping)
+# Apply --env overrides — values with whitespace or special chars are quoted
+# via format_dotenv_value so PHP dotenv can parse them (APP_NAME="My App").
 for env_pair in "${EXTRA_ENV_VARS[@]+"${EXTRA_ENV_VARS[@]}"}"; do
     [[ -z "$env_pair" ]] && continue
     env_key="${env_pair%%=*}"
     env_val="${env_pair#*=}"
-    escaped_val=$(sed_escape_value "$env_val")
-    if grep -qF "${env_key}=" "${SITE_DIR}/shared/.env" && grep -q "^${env_key}=" "${SITE_DIR}/shared/.env"; then
+    formatted_val=$(format_dotenv_value "$env_val")
+    escaped_val=$(sed_escape_value "$formatted_val")
+    if grep -q "^${env_key}=" "${SITE_DIR}/shared/.env"; then
         sed -i "s|^${env_key}=.*|${env_key}=${escaped_val}|" "${SITE_DIR}/shared/.env"
     else
-        echo "${env_key}=${env_val}" >> "${SITE_DIR}/shared/.env"
+        echo "${env_key}=${formatted_val}" >> "${SITE_DIR}/shared/.env"
     fi
 done
 
