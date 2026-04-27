@@ -200,6 +200,13 @@ _confirm_destructive() {
 #   site loses DB access. Site user password lives in DB_${SITE_ID}_PASSWORD
 #   (set by add-site.sh). Dies BEFORE issuing any GRANT if the password is
 #   missing — refuses to leave grants half-broken.
+#
+#   NOTE: Does NOT reset the existing user's password. CREATE USER IF NOT
+#   EXISTS only fires for the recovery edge case where the user is missing;
+#   for the normal sync/import case the user already exists and we leave
+#   its password alone. An unconditional ALTER USER here would silently
+#   overwrite a password that drifted from the credentials store, breaking
+#   any site whose .env was edited out-of-band.
 _regrant_site_user() {
     local root_pass="$1" db_name="$2" site_id="$3"
     local site_pw
@@ -207,7 +214,6 @@ _regrant_site_user() {
         || die "Site password DB_${site_id}_PASSWORD not in credentials. Refusing to recreate database without restoring grants."
     mysql_safe "$root_pass" <<MYSQL
 CREATE USER IF NOT EXISTS '${site_id}'@'localhost' IDENTIFIED BY '${site_pw}';
-ALTER USER '${site_id}'@'localhost' IDENTIFIED BY '${site_pw}';
 GRANT ALL PRIVILEGES ON \`${db_name}\`.* TO '${site_id}'@'localhost';
 FLUSH PRIVILEGES;
 MYSQL
