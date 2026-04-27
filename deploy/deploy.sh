@@ -244,6 +244,17 @@ systemctl reload "php${PHP_VERSION}-fpm"
 supervisorctl reread >/dev/null 2>&1 || true
 supervisorctl update >/dev/null 2>&1 || true
 
+# Soft-signal queue workers to exit at end of current job — belt-and-braces with
+# the supervisorctl restart below. If supervisorctl restart silently fails
+# (transient socket error, status-loop short-circuit), the worker self-terminates
+# next loop iteration; autorestart=true in the worker template brings it back
+# reading the new /current symlink with a fresh autoload. Without this, an
+# orphaned worker can survive up to --max-time=3600s with stale class cache and
+# fail with __PHP_Incomplete_Class on the next dequeued job.
+log_info "Signaling queue workers to restart (queue:restart)..."
+cd "$RELEASE_DIR"
+sudo -u deployer "$PHP_BIN" artisan queue:restart || log_warn "queue:restart failed (non-fatal)"
+
 # Restart supervisor processes for this domain.
 # The :* suffix targets the full process group — required for numprocs>1 and
 # harmless for numprocs=1. Without it, supervisorctl errors on multi-process
