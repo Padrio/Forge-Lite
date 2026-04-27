@@ -99,6 +99,7 @@ cleanup_add_site() {
         rm -f "/etc/php/${PHP_VERSION}/fpm/pool.d/${DOMAIN}.conf" 2>/dev/null || true
         rm -f "/etc/nginx/sites-enabled/${DOMAIN}.conf" 2>/dev/null || true
         rm -f "/etc/nginx/sites-available/${DOMAIN}.conf" 2>/dev/null || true
+        rm -f "/etc/nginx/sites-extra/${DOMAIN}.conf" 2>/dev/null || true
         rm -f /etc/supervisor/conf.d/${DOMAIN}-*.conf 2>/dev/null || true
         rm -f "/etc/cron.d/${DOMAIN}-scheduler" 2>/dev/null || true
         rm -f "/etc/forge-lite/auth/${DOMAIN}.conf" 2>/dev/null || true
@@ -135,6 +136,13 @@ touch "/etc/forge-lite/auth/${DOMAIN}.htpasswd"
 chmod 644 "/etc/forge-lite/auth/${DOMAIN}.conf"
 chown root:www-data "/etc/forge-lite/auth/${DOMAIN}.htpasswd"
 chmod 640 "/etc/forge-lite/auth/${DOMAIN}.htpasswd"
+
+# Create empty per-site NGINX extras include (nginx requires the include to exist).
+# Site owners can append their own location/limit_req_zone/add_header directives
+# to /etc/nginx/sites-extra/${DOMAIN}.conf without forking the vhost template.
+mkdir -p /etc/nginx/sites-extra
+touch "/etc/nginx/sites-extra/${DOMAIN}.conf"
+chmod 644 "/etc/nginx/sites-extra/${DOMAIN}.conf"
 
 # ---------------------------------------------------------------------------
 # 2. PHP-FPM pool (multi-site aware sizing)

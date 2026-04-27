@@ -99,6 +99,7 @@ fi
 # ---------------------------------------------------------------------------
 rm -f "/etc/nginx/sites-enabled/${DOMAIN}.conf"
 rm -f "/etc/nginx/sites-available/${DOMAIN}.conf"
+rm -f "/etc/nginx/sites-extra/${DOMAIN}.conf"
 rm -f "/etc/forge-lite/auth/${DOMAIN}.conf"
 rm -f "/etc/forge-lite/auth/${DOMAIN}.htpasswd"
 if nginx -t 2>/dev/null; then

@@ -213,9 +213,35 @@ fi
 # 7. Database migrations
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_MIGRATE" != true ]]; then
-    log_info "Running migrations..."
     cd "$RELEASE_DIR"
-    sudo -u deployer "$PHP_BIN" artisan migrate --force
+
+    # Optional: separate migrations-user override. Sites that revoke
+    # destructive grants from the runtime user (e.g. append-only enforcement
+    # on audit/ledger tables) can set DB_USERNAME_MIGRATIONS /
+    # DB_PASSWORD_MIGRATIONS in their shared .env to use a privileged user
+    # for the migrate step only. Backwards-compatible: absence falls through
+    # to the standard runtime-user migration call.
+    mig_user=""
+    mig_pass=""
+    if [[ -f "${SHARED_DIR}/.env" ]]; then
+        if grep -qE '^DB_USERNAME_MIGRATIONS=' "${SHARED_DIR}/.env"; then
+            mig_user=$(grep -E '^DB_USERNAME_MIGRATIONS=' "${SHARED_DIR}/.env" | head -1 | cut -d= -f2-)
+            mig_user="${mig_user%\"}"; mig_user="${mig_user#\"}"
+        fi
+        if grep -qE '^DB_PASSWORD_MIGRATIONS=' "${SHARED_DIR}/.env"; then
+            mig_pass=$(grep -E '^DB_PASSWORD_MIGRATIONS=' "${SHARED_DIR}/.env" | head -1 | cut -d= -f2-)
+            mig_pass="${mig_pass%\"}"; mig_pass="${mig_pass#\"}"
+        fi
+    fi
+
+    if [[ -n "$mig_user" ]] && [[ -n "$mig_pass" ]]; then
+        log_info "Running migrations with override user: ${mig_user}"
+        sudo -u deployer env DB_USERNAME="$mig_user" DB_PASSWORD="$mig_pass" \
+            "$PHP_BIN" artisan migrate --force
+    else
+        log_info "Running migrations..."
+        sudo -u deployer "$PHP_BIN" artisan migrate --force
+    fi
 fi
 
 # ---------------------------------------------------------------------------
