@@ -33,7 +33,7 @@ provision_swap() {
 # forge-lite kernel tuning
 
 # Memory & file limits
-vm.swappiness = 30
+vm.swappiness = 10
 vm.overcommit_memory = 1
 fs.file-max = 2097152
 

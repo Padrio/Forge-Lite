@@ -4,7 +4,8 @@ set -euo pipefail
 
 # Resolve project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export FORGE_LITE_DIR
 
 # Source shared libraries
 source "${FORGE_LITE_DIR}/lib/common.sh"
@@ -14,6 +15,7 @@ source "${FORGE_LITE_DIR}/lib/validation.sh"
 
 # Source all modules (defines provision_* functions without executing them)
 for module in "${FORGE_LITE_DIR}/server/modules/"*.sh; do
+    # shellcheck disable=SC1090  # dynamic module path is intentional
     source "$module"
 done
 
@@ -21,7 +23,10 @@ done
 # CLI argument parsing
 # ---------------------------------------------------------------------------
 FORGE_LITE_PHP_DEFAULT="8.3"
+FORGE_LITE_PHP_VERSIONS="8.2,8.3,8.4"
 FORGE_LITE_DB_PASSWORD=""
+FORGE_LITE_DB_BUFFER_POOL=""
+FORGE_LITE_DB_FLUSH_LOG="1"
 FORGE_LITE_REDIS_PASSWORD=""
 FORGE_LITE_NODE_VERSION="22"
 SKIP_REBOOT=false
@@ -33,7 +38,13 @@ Usage: provision.sh [OPTIONS]
 
 Options:
     --php-default=VERSION   Default PHP CLI version (default: 8.3)
+    --php-versions=LIST     Comma-separated PHP versions to install
+                            (default: 8.2,8.3,8.4; add 8.1 to opt into EOL 8.1)
     --db-password=PASS      MariaDB root password (auto-generated if omitted)
+    --db-buffer-pool=SIZE   InnoDB buffer pool, e.g. 512M or 2G
+                            (default: 20% RAM, capped 1024M)
+    --db-flush-log=N        innodb_flush_log_at_trx_commit 0|1|2
+                            (default: 1 = full durability)
     --redis-password=PASS   Redis password (auto-generated if omitted)
     --node-version=VERSION  Node.js major version (default: 22)
     --skip-reboot           Don't reboot after provisioning
@@ -46,7 +57,10 @@ USAGE
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --php-default=*)    FORGE_LITE_PHP_DEFAULT="${1#*=}"; shift ;;
+        --php-versions=*)   FORGE_LITE_PHP_VERSIONS="${1#*=}"; shift ;;
         --db-password=*)    FORGE_LITE_DB_PASSWORD="${1#*=}"; shift ;;
+        --db-buffer-pool=*) FORGE_LITE_DB_BUFFER_POOL="${1#*=}"; shift ;;
+        --db-flush-log=*)   FORGE_LITE_DB_FLUSH_LOG="${1#*=}"; shift ;;
         --redis-password=*) FORGE_LITE_REDIS_PASSWORD="${1#*=}"; shift ;;
         --node-version=*)   FORGE_LITE_NODE_VERSION="${1#*=}"; shift ;;
         --skip-reboot)      SKIP_REBOOT=true; shift ;;
@@ -56,7 +70,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-export FORGE_LITE_PHP_DEFAULT FORGE_LITE_DB_PASSWORD FORGE_LITE_REDIS_PASSWORD FORGE_LITE_NODE_VERSION
+export FORGE_LITE_PHP_DEFAULT FORGE_LITE_PHP_VERSIONS FORGE_LITE_DB_PASSWORD
+export FORGE_LITE_DB_BUFFER_POOL FORGE_LITE_DB_FLUSH_LOG
+export FORGE_LITE_REDIS_PASSWORD FORGE_LITE_NODE_VERSION
 
 # ---------------------------------------------------------------------------
 # Pre-flight checks
@@ -121,6 +137,12 @@ cp "${FORGE_LITE_DIR}/server/config/templates/logrotate/forge-lite" /etc/logrota
 # Create site config and auth directories
 mkdir -p /etc/forge-lite
 mkdir -p /etc/forge-lite/auth
+
+# Ship a commented offsite-backup config example (inactive until copied to
+# backup.conf and filled in — see README "Offsite backups"). Local-only backups
+# remain the default; absence of backup.conf means nothing is uploaded.
+install -m 600 "${FORGE_LITE_DIR}/server/config/templates/backup/backup.conf.example" \
+    /etc/forge-lite/backup.conf.example
 
 # ---------------------------------------------------------------------------
 # Mark as provisioned

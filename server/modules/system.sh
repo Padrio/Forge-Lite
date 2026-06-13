@@ -3,9 +3,10 @@
 provision_system() {
     log_info "=== Provisioning: System Base ==="
 
-    # Add ondrej/php PPA
-    if [[ ! -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list ]] && \
-       [[ ! -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources ]]; then
+    # Add ondrej/php PPA (skip if an ondrej-php source file already exists —
+    # compgen -G evaluates the glob, unlike `[[ -f glob ]]` which tests a literal).
+    if ! compgen -G "/etc/apt/sources.list.d/ondrej-ubuntu-php-*.list" >/dev/null 2>&1 && \
+       ! compgen -G "/etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources" >/dev/null 2>&1; then
         log_info "Adding ondrej/php PPA..."
         ensure_packages software-properties-common
         add-apt-repository -y ppa:ondrej/php
@@ -82,6 +83,20 @@ provision_system() {
     ensure_line_in_file /etc/security/limits.conf "deployer hard nofile 65535" "deployer hard nofile"
     ensure_line_in_file /etc/security/limits.conf "www-data soft nofile 65535" "www-data soft nofile"
     ensure_line_in_file /etc/security/limits.conf "www-data hard nofile 65535" "www-data hard nofile"
+
+    # Cap systemd-journald disk usage — the default is uncapped (up to 10% of the
+    # filesystem) and grows unbounded on a long-lived box.
+    local journald_conf="/etc/systemd/journald.conf.d/99-forge-lite.conf"
+    if [[ ! -f "$journald_conf" ]]; then
+        mkdir -p /etc/systemd/journald.conf.d
+        cat > "$journald_conf" <<'JOURNALD'
+[Journal]
+SystemMaxUse=200M
+SystemKeepFree=100M
+JOURNALD
+        systemctl restart systemd-journald 2>/dev/null || true
+        log_info "Capped journald disk usage at 200M"
+    fi
 
     log_ok "System base provisioning complete"
 }

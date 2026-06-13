@@ -10,10 +10,9 @@ if [[ -t 2 ]]; then
     GREEN='\033[0;32m'
     YELLOW='\033[1;33m'
     BLUE='\033[0;34m'
-    BOLD='\033[1m'
     RESET='\033[0m'
 else
-    RED='' GREEN='' YELLOW='' BLUE='' BOLD='' RESET=''
+    RED='' GREEN='' YELLOW='' BLUE='' RESET=''
 fi
 
 # ---------------------------------------------------------------------------
@@ -223,4 +222,28 @@ ensure_user() {
         useradd --create-home --home-dir "$home" --shell "$shell" "$username"
         log_info "Created user ${username}"
     fi
+}
+
+# enforce_secret_perms <file> [owner] [mode]
+#   Idempotently enforces ownership + permissions on a sensitive file
+#   (default deployer:deployer 600 — e.g. a site's shared/.env). Acts only on
+#   real drift and logs only when it actually changes something, so it is safe
+#   to call on every write and every deploy. Silently no-ops when the file does
+#   not exist. Follows symlinks — pass the real target path (e.g. shared/.env,
+#   not a release symlink) so chown/chmod hit the backing file.
+enforce_secret_perms() {
+    local file="$1" owner="${2:-deployer:deployer}" mode="${3:-600}"
+    [[ -e "$file" ]] || return 0
+    local cur_owner cur_mode changed=false
+    cur_owner="$(stat -c '%U:%G' "$file" 2>/dev/null || true)"
+    cur_mode="$(stat -c '%a' "$file" 2>/dev/null || true)"
+    if [[ -n "$cur_owner" && "$cur_owner" != "$owner" ]]; then
+        if chown "$owner" "$file"; then changed=true; fi
+    fi
+    if [[ -n "$cur_mode" && "$cur_mode" != "$mode" ]]; then
+        if chmod "$mode" "$file"; then changed=true; fi
+    fi
+    [[ "$changed" == true ]] && \
+        log_warn "Hardened permissions on ${file} (was ${cur_owner} ${cur_mode} -> ${owner} ${mode})"
+    return 0
 }

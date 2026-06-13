@@ -3,7 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export FORGE_LITE_DIR
 
 source "${FORGE_LITE_DIR}/lib/common.sh"
 source "${FORGE_LITE_DIR}/lib/credentials.sh"
@@ -154,6 +155,12 @@ if grep -q "^APP_KEY=$" "${SHARED_DIR}/.env" 2>/dev/null; then
     log_ok "APP_KEY generated"
 fi
 
+# Re-assert .env ownership/permissions on the shared target (not the release
+# symlink). sudo/sed-based edits here or via forge-lite-env can silently flip
+# the owner to root or loosen the mode; the .env holds DB/Redis/mail secrets
+# and must stay 600 deployer:deployer.
+enforce_secret_perms "${SHARED_DIR}/.env"
+
 # ---------------------------------------------------------------------------
 # 3. Composer install
 # ---------------------------------------------------------------------------
@@ -192,15 +199,20 @@ if [[ "$SKIP_MIGRATE" != true ]] && [[ -n "${DB_NAME:-}" ]]; then
     log_info "Creating pre-migration database backup..."
     backup_dir="/home/deployer/backups"
     mkdir -p "$backup_dir"
+    chmod 700 "$backup_dir" 2>/dev/null || true
     backup_file="${backup_dir}/${DB_NAME}_pre_${RELEASE_ID}.sql.gz"
     root_pass=""
     root_pass=$(get_credential "MARIADB_ROOT_PASSWORD" 2>/dev/null) || true
     if [[ -n "$root_pass" ]]; then
         if mysql_safe "$root_pass" "$DB_NAME" -e "SELECT 1" 2>/dev/null; then
-            mysqldump_safe "$root_pass" "$DB_NAME" --single-transaction | gzip > "$backup_file" && \
-                log_ok "Pre-migration backup saved: ${backup_file}" || \
+            if mysqldump_safe "$root_pass" "$DB_NAME" --single-transaction | gzip > "$backup_file"; then
+                log_ok "Pre-migration backup saved: ${backup_file}"
+            else
                 log_warn "Pre-migration backup failed (non-fatal)"
+            fi
+            # Pre-migration dump holds personal data — keep it 600 deployer, not 644.
             chown deployer:deployer "$backup_file" 2>/dev/null || true
+            chmod 600 "$backup_file" 2>/dev/null || true
         else
             log_warn "Could not connect to database for backup (non-fatal)"
         fi
@@ -285,7 +297,7 @@ sudo -u deployer "$PHP_BIN" artisan queue:restart || log_warn "queue:restart fai
 # The :* suffix targets the full process group — required for numprocs>1 and
 # harmless for numprocs=1. Without it, supervisorctl errors on multi-process
 # programs, leaving FATAL workers stuck after a deploy.
-for conf in /etc/supervisor/conf.d/${DOMAIN}-*.conf; do
+for conf in /etc/supervisor/conf.d/"${DOMAIN}"-*.conf; do
     if [[ -f "$conf" ]]; then
         local_name=$(basename "$conf" .conf)
         if supervisorctl status "${local_name}:*" 2>/dev/null | grep -qE "RUNNING|STOPPED|EXITED|FATAL|BACKOFF"; then
@@ -331,7 +343,7 @@ log_info "Cleaning up old releases (keeping ${KEEP})..."
 cd "${SITE_DIR}/releases"
 # List directories sorted oldest first, remove all but the newest $KEEP
 # shellcheck disable=SC2012
-ls -1dt */ 2>/dev/null | tail -n +$(( KEEP + 1 )) | while read -r old_release; do
+ls -1dt -- */ 2>/dev/null | tail -n +$(( KEEP + 1 )) | while read -r old_release; do
     rm -rf "${SITE_DIR}/releases/${old_release}"
     log_info "Removed old release: ${old_release}"
 done

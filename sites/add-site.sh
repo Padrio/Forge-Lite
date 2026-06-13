@@ -3,7 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export FORGE_LITE_DIR
 
 source "${FORGE_LITE_DIR}/lib/common.sh"
 source "${FORGE_LITE_DIR}/lib/credentials.sh"
@@ -66,6 +67,13 @@ done
 validate_domain "$DOMAIN"
 validate_php_version "$PHP_VERSION"
 
+# The chosen PHP version must actually be installed. Provisioning installs
+# 8.2-8.4 by default; 8.1 (EOL) and any other version are opt-in via
+# `provision --php-versions=...`. Fail early with a clear message instead of
+# half-creating the site and tripping over a missing FPM unit later.
+command -v "php${PHP_VERSION}" >/dev/null 2>&1 || \
+    die "PHP ${PHP_VERSION} is not installed. Re-provision with --php-versions=...,${PHP_VERSION} or pick an installed version."
+
 SITE_ID=$(sanitize_for_identifier "$DOMAIN")
 SITE_DIR="/home/deployer/sites/${DOMAIN}"
 FPM_SOCKET="/var/run/php/php${PHP_VERSION}-${DOMAIN}-fpm.sock"
@@ -100,7 +108,7 @@ cleanup_add_site() {
         rm -f "/etc/nginx/sites-enabled/${DOMAIN}.conf" 2>/dev/null || true
         rm -f "/etc/nginx/sites-available/${DOMAIN}.conf" 2>/dev/null || true
         rm -f "/etc/nginx/sites-extra/${DOMAIN}.conf" 2>/dev/null || true
-        rm -f /etc/supervisor/conf.d/${DOMAIN}-*.conf 2>/dev/null || true
+        rm -f /etc/supervisor/conf.d/"${DOMAIN}"-*.conf 2>/dev/null || true
         rm -f "/etc/cron.d/${DOMAIN}-scheduler" 2>/dev/null || true
         rm -f "/etc/forge-lite/auth/${DOMAIN}.conf" 2>/dev/null || true
         rm -f "/etc/forge-lite/auth/${DOMAIN}.htpasswd" 2>/dev/null || true
@@ -346,8 +354,9 @@ if grep -q "^APP_KEY=$" "${SITE_DIR}/shared/.env"; then
     log_info "APP_KEY auto-generated"
 fi
 
-chown deployer:deployer "${SITE_DIR}/shared/.env"
-chmod 600 "${SITE_DIR}/shared/.env"
+# .env holds DB/Redis/mail secrets — enforce 600 deployer:deployer (idempotent,
+# self-healing if a prior sudo edit flipped owner->root or loosened the mode).
+enforce_secret_perms "${SITE_DIR}/shared/.env"
 log_ok ".env template created"
 
 # ---------------------------------------------------------------------------
@@ -377,7 +386,11 @@ log_ok "Site config saved to ${SITE_CONFIG}"
 # 11. Reload services
 # ---------------------------------------------------------------------------
 log_info "Reloading services..."
-systemctl restart "php${PHP_VERSION}-fpm"
+# Ensure this site's PHP-FPM version is enabled + running. Non-default versions
+# are installed but stopped+disabled by provisioning; enable on demand here so
+# the site works now and the FPM unit survives a reboot (ensure_service enables
+# then restarts to pick up the new pool).
+ensure_service "php${PHP_VERSION}-fpm" restart
 nginx -t && systemctl reload nginx
 supervisorctl reread
 supervisorctl update

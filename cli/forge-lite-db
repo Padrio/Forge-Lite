@@ -219,6 +219,102 @@ FLUSH PRIVILEGES;
 MYSQL
 }
 
+# ---------------------------------------------------------------------------
+# Backup helpers — local hardening, retention prune, optional offsite (S3).
+# ---------------------------------------------------------------------------
+BACKUP_CONF="${BACKUP_CONF:-/etc/forge-lite/backup.conf}"
+BACKUP_DEFAULT_KEEP=14
+
+# _harden_backup <file>
+#   Tightens a freshly written dump and its directory: dir 700, file 600,
+#   both owned by deployer. Dumps hold personal data — never world-readable.
+_harden_backup() {
+    local file="$1" dir
+    dir="$(dirname "$file")"
+    chmod 700 "$dir" 2>/dev/null || true
+    chown deployer:deployer "$dir" 2>/dev/null || true
+    chmod 600 "$file" 2>/dev/null || true
+    chown deployer:deployer "$file" 2>/dev/null || true
+}
+
+# _prune_dumps <dir> <prefix> <keep>
+#   Removes all but the newest <keep> dumps matching <prefix>_<timestamp>.sql*.
+#   The [0-9] after the prefix deliberately excludes deploy.sh's pre-migration
+#   backups (<db>_pre_<ts>.sql.gz), which carry their own retention.
+_prune_dumps() {
+    local dir="$1" prefix="$2" keep="$3"
+    [[ -d "$dir" ]] || return 0
+    [[ "$keep" =~ ^[0-9]+$ ]] || return 0
+    # `|| true` guards pipefail: `ls` exits 2 when the glob matches nothing.
+    # shellcheck disable=SC2012
+    ls -1t "${dir}/${prefix}_"[0-9]*.sql* 2>/dev/null | tail -n +$(( keep + 1 )) | while read -r old; do
+        rm -f "$old" && log_info "Pruned old dump: $(basename "$old")"
+    done || true
+}
+
+# _load_backup_conf — sources optional /etc/forge-lite/backup.conf (KEY=VALUE).
+#   Absent file or BACKUP_S3_ENABLED=false → offsite stays off (default
+#   local-only behaviour, unchanged).
+_load_backup_conf() {
+    BACKUP_S3_ENABLED="${BACKUP_S3_ENABLED:-false}"
+    [[ -f "$BACKUP_CONF" ]] || return 0
+    # shellcheck disable=SC1090
+    source "$BACKUP_CONF"
+}
+
+# upload_to_s3 <file> — uploads via rclone using S3 creds from backup.conf.
+#   Encapsulated so the upload tool isn't hard-wired: swap the rclone block for
+#   aws-cli/s3cmd here if preferred. Dies with a clear message (no silent skip,
+#   no auto-install) when rclone is missing while offsite is enabled. rclone
+#   reads the whole remote from env — no on-disk rclone.conf, no creds in argv.
+upload_to_s3() {
+    local file="$1"
+    command -v rclone >/dev/null 2>&1 || die "Offsite backup enabled but 'rclone' is not installed. Install with: apt-get install -y rclone (see README 'Offsite backups')."
+    [[ -n "${BACKUP_S3_BUCKET:-}" ]] || die "BACKUP_S3_ENABLED=true but BACKUP_S3_BUCKET is unset in ${BACKUP_CONF}."
+    local dest="flofs:${BACKUP_S3_BUCKET}"
+    [[ -n "${BACKUP_S3_PREFIX:-}" ]] && dest="${dest}/${BACKUP_S3_PREFIX}"
+    RCLONE_CONFIG_FLOFS_TYPE=s3 \
+    RCLONE_CONFIG_FLOFS_PROVIDER="${BACKUP_S3_PROVIDER:-Other}" \
+    RCLONE_CONFIG_FLOFS_ACCESS_KEY_ID="${BACKUP_S3_ACCESS_KEY:-}" \
+    RCLONE_CONFIG_FLOFS_SECRET_ACCESS_KEY="${BACKUP_S3_SECRET_KEY:-}" \
+    RCLONE_CONFIG_FLOFS_ENDPOINT="${BACKUP_S3_ENDPOINT:-}" \
+    RCLONE_CONFIG_FLOFS_REGION="${BACKUP_S3_REGION:-}" \
+        rclone copy "$file" "$dest" || die "rclone upload to ${dest} failed."
+}
+
+# _offsite_backup <file> — optional encrypt (age|gpg) + upload. No-op unless
+#   backup.conf sets BACKUP_S3_ENABLED=true. Encryption runs inline (not in a
+#   command substitution) so a `die` aborts the whole command, not just a
+#   subshell.
+_offsite_backup() {
+    local file="$1"
+    _load_backup_conf
+    [[ "${BACKUP_S3_ENABLED:-false}" == "true" ]] || return 0
+
+    local upload="$file"
+    case "${BACKUP_ENCRYPT:-}" in
+        ""|none) ;;
+        age)
+            command -v age >/dev/null 2>&1 || die "BACKUP_ENCRYPT=age but 'age' is not installed (apt-get install -y age)."
+            [[ -n "${BACKUP_AGE_RECIPIENT:-}" ]] || die "BACKUP_ENCRYPT=age requires BACKUP_AGE_RECIPIENT in ${BACKUP_CONF}."
+            age -r "$BACKUP_AGE_RECIPIENT" -o "${file}.age" "$file" || die "age encryption failed."
+            upload="${file}.age"; _harden_backup "$upload"
+            log_info "Encrypted $(basename "$file") -> $(basename "$upload") (age)" ;;
+        gpg)
+            command -v gpg >/dev/null 2>&1 || die "BACKUP_ENCRYPT=gpg but 'gpg' is not installed."
+            [[ -n "${BACKUP_GPG_RECIPIENT:-}" ]] || die "BACKUP_ENCRYPT=gpg requires BACKUP_GPG_RECIPIENT in ${BACKUP_CONF}."
+            gpg --batch --yes -r "$BACKUP_GPG_RECIPIENT" -o "${file}.gpg" -e "$file" || die "gpg encryption failed."
+            upload="${file}.gpg"; _harden_backup "$upload"
+            log_info "Encrypted $(basename "$file") -> $(basename "$upload") (gpg)" ;;
+        *)
+            die "Unknown BACKUP_ENCRYPT='${BACKUP_ENCRYPT}' in ${BACKUP_CONF} (use empty, age, or gpg)." ;;
+    esac
+
+    log_info "Uploading $(basename "$upload") to offsite S3 (bucket: ${BACKUP_S3_BUCKET}${BACKUP_S3_PREFIX:+/${BACKUP_S3_PREFIX}})..."
+    upload_to_s3 "$upload"
+    log_ok "Offsite upload complete: $(basename "$upload")"
+}
+
 cmd_create() {
     local name="$1"
     [[ -n "$name" ]] || die "Database name required."
@@ -287,9 +383,11 @@ cmd_backup() {
     local backup_file="${backup_dir}/${safe_name}_${timestamp}.sql.gz"
 
     mysqldump_safe "$root_pass" "$safe_name" --single-transaction | gzip > "$backup_file"
-    chown deployer:deployer "$backup_file" 2>/dev/null || true
+    _harden_backup "$backup_file"
+    _prune_dumps "$backup_dir" "$safe_name" "$BACKUP_DEFAULT_KEEP"
 
-    log_ok "Backup saved to ${backup_file}"
+    log_ok "Backup saved to ${backup_file} (600 deployer, keeping ${BACKUP_DEFAULT_KEEP})"
+    _offsite_backup "$backup_file"
 }
 
 cmd_restore() {
@@ -315,18 +413,21 @@ cmd_restore() {
 }
 
 cmd_dump() {
-    local domain="" output="" gzip_enabled=true
+    local domain="" output="" gzip_enabled=true keep="$BACKUP_DEFAULT_KEEP"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --output=*)  output="${1#*=}" ;;
             --no-gzip)   gzip_enabled=false ;;
+            --keep=*)    keep="${1#*=}" ;;
             -h|--help)
                 cat <<'USAGE'
-Usage: forge-lite-db dump <domain> [--output=PATH] [--no-gzip]
+Usage: forge-lite-db dump <domain> [--output=PATH] [--no-gzip] [--keep=N]
   Dumps a site's database to disk. Default path:
     /home/deployer/backups/<site_id>_<timestamp>.sql.gz
+  Dumps are written 600 deployer:deployer; the backup dir is 700.
   --output=PATH   Override destination path
   --no-gzip       Write raw SQL (.sql) instead of gzipped (.sql.gz)
+  --keep=N        Keep newest N dumps for this site, prune older (default: 14)
 USAGE
                 return 0
                 ;;
@@ -340,7 +441,8 @@ USAGE
         shift
     done
 
-    [[ -n "$domain" ]] || die "Usage: forge-lite-db dump <domain> [--output=PATH] [--no-gzip]"
+    [[ -n "$domain" ]] || die "Usage: forge-lite-db dump <domain> [--output=PATH] [--no-gzip] [--keep=N]"
+    [[ "$keep" =~ ^[0-9]+$ ]] || die "--keep must be a non-negative integer (got: ${keep})."
 
     local db_name site_id root_pass
     db_name=$(resolve_site_db "$domain")
@@ -351,6 +453,7 @@ USAGE
 
     local backup_dir="/home/deployer/backups"
     mkdir -p "$backup_dir"
+    chmod 700 "$backup_dir" 2>/dev/null || true
     chown deployer:deployer "$backup_dir" 2>/dev/null || true
 
     local timestamp ext
@@ -367,11 +470,13 @@ USAGE
         mysqldump_safe "$root_pass" --single-transaction --quick --lock-tables=false "$db_name" \
             > "$output"
     fi
-    chown deployer:deployer "$output" 2>/dev/null || true
+    _harden_backup "$output"
+    _prune_dumps "$backup_dir" "$site_id" "$keep"
 
     local size
     size=$(du -h "$output" | cut -f1)
-    log_ok "Dump complete (size: ${size})"
+    log_ok "Dump complete (size: ${size}, 600 deployer, keeping ${keep})"
+    _offsite_backup "$output"
     echo "$output"
 }
 

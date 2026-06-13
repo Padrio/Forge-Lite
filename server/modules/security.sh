@@ -18,6 +18,9 @@ provision_security() {
     }
 
     set_sshd_option "PasswordAuthentication" "no"
+    # Root stays available for administration (CLAUDE.md §9) but key-only —
+    # make the OpenSSH default explicit so a distro/default change can't loosen it.
+    set_sshd_option "PermitRootLogin" "prohibit-password"
     set_sshd_option "MaxAuthTries" "3"
     set_sshd_option "X11Forwarding" "no"
     set_sshd_option "AllowAgentForwarding" "no"

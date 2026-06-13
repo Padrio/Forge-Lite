@@ -197,9 +197,36 @@ sudo php-switch 8.4      # Switch default PHP CLI + FPM
 sudo forge-lite-db create myapp       # Create database + user
 sudo forge-lite-db list               # List databases
 sudo forge-lite-db backup myapp       # Backup to /home/deployer/backups/
+sudo forge-lite-db dump example.com --keep=14   # Dump a site's DB, prune old
 sudo forge-lite-db restore myapp dump.sql.gz
 sudo forge-lite-db drop myapp --yes   # Drop database + user
 ```
+
+Dumps are written `600 deployer:deployer` into `/home/deployer/backups/` (dir
+`700`) and pruned to the newest `--keep=N` per site (default **14**). They hold
+personal data — they are never world-readable.
+
+### Offsite backups (optional)
+
+Offsite upload is **dormant by default** — `forge-lite-db` keeps backups local
+unless you opt in. To enable it, copy the example config and fill it in:
+
+```bash
+sudo cp /etc/forge-lite/backup.conf.example /etc/forge-lite/backup.conf
+sudo chmod 600 /etc/forge-lite/backup.conf
+sudo nano  /etc/forge-lite/backup.conf       # set BACKUP_S3_ENABLED=true + creds
+sudo apt-get install -y rclone               # upload tool (only needed if enabled)
+```
+
+`backup.conf` keys: `BACKUP_S3_ENABLED`, `BACKUP_S3_BUCKET`, `BACKUP_S3_PREFIX`,
+`BACKUP_S3_ENDPOINT`, `BACKUP_S3_REGION`, `BACKUP_S3_PROVIDER`,
+`BACKUP_S3_ACCESS_KEY`, `BACKUP_S3_SECRET_KEY`. Optional client-side encryption
+before upload: `BACKUP_ENCRYPT=age|gpg` with `BACKUP_AGE_RECIPIENT` /
+`BACKUP_GPG_RECIPIENT`. When enabled, every `dump`/`backup` uploads via rclone
+(driven entirely from env — no `rclone.conf`, no creds in the process list); if
+`rclone` is missing the command aborts with a clear message rather than silently
+skipping. The upload tool is wrapped in `upload_to_s3()` in `forge-lite-db`, so
+swapping rclone for `aws-cli`/`s3cmd` is a one-function change.
 
 ### forge-lite-ssl
 ```bash
@@ -226,7 +253,16 @@ sudo forge-lite-env list example.com           # Show all .env variables
 sudo forge-lite-env get example.com APP_KEY    # Get a variable
 sudo forge-lite-env set example.com KEY VALUE  # Set a variable
 sudo forge-lite-env delete example.com KEY     # Remove a variable
+sudo forge-lite-env audit                      # Check every site's .env perms
+sudo forge-lite-env audit --fix                # Fix any drift (deployer:deployer 600)
 ```
+
+> **`.env` permissions are `600 deployer:deployer`.** They hold DB, Redis and
+> mail secrets. `add-site`, every `forge-lite-env set/delete`, and every deploy
+> re-assert these perms automatically. If you ever hit `permission denied`
+> editing a `.env`, **never** `chmod 777` it — check the owner instead
+> (`sudo chown deployer:deployer …`) or edit via `forge-lite-env set`. Run
+> `forge-lite-env audit --fix` to repair drift across all sites at once.
 
 ### forge-lite update
 ```bash
@@ -280,14 +316,14 @@ sudo forge-lite site remove example.com --keep-db --keep-files
 
 | Component | Details |
 |-----------|---------|
-| **System** | deployer user, UTC timezone, en_US.UTF-8 locale, open file limits |
-| **Swap** | Size based on RAM, sysctl tuning, OOM priorities |
-| **Security** | SSH hardening, UFW (22/80/443), Fail2Ban, unattended-upgrades |
-| **NGINX** | Mainline, DH params, gzip, rate limiting, security headers |
-| **PHP** | 8.1, 8.2, 8.3, 8.4 with FPM + Laravel extensions + OPcache/JIT |
+| **System** | deployer user, UTC timezone, en_US.UTF-8 locale, open file limits, journald capped (200M) |
+| **Swap** | Size based on RAM, sysctl tuning (`vm.swappiness=10`), OOM priorities |
+| **Security** | SSH hardening (key-only, `PermitRootLogin prohibit-password`, MaxAuthTries=3), UFW (22/80/443), Fail2Ban, unattended-upgrades |
+| **NGINX** | Mainline, DH params, gzip, rate limiting, security headers (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — re-asserted on static assets), OCSP stapling, CSP opt-in (Report-Only template) |
+| **PHP** | 8.2, 8.3, 8.4 with FPM + Laravel extensions + OPcache/JIT (8.1 is EOL, opt-in via `provision --php-versions=`). Only the **default** version's FPM is started; other versions install stopped+disabled and are enabled on demand when a site uses them. |
 | **Composer** | Global install with weekly auto-update |
-| **MariaDB** | Secured, InnoDB tuned (70% RAM), forge-lite admin user |
-| **Redis** | Password-protected, AOF, maxmemory (25% RAM), allkeys-lru |
+| **MariaDB** | Secured, InnoDB tuned (buffer pool 20% RAM capped 1024M, full durability `flush_log=1`; override via `--db-buffer-pool=` / `--db-flush-log=`), forge-lite admin user |
+| **Redis** | Password-protected, AOF, maxmemory (25% RAM), `volatile-lru` (evicts only TTL keys — protects queue/Horizon jobs) |
 | **Node.js** | v22 via NodeSource |
 | **Supervisor** | For queue workers, Horizon, SSR |
 | **Certbot** | Let's Encrypt with nginx plugin + auto-renewal |

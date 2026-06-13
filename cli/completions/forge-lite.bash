@@ -112,7 +112,7 @@ _forge_lite_complete() {
                         COMPREPLY=()
                         ;;
                     dump)
-                        local flags="--output= --no-gzip"
+                        local flags="--output= --no-gzip --keep="
                         COMPREPLY=($(compgen -W "$flags" -- "$cur"))
                         [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
                         ;;
@@ -134,9 +134,13 @@ _forge_lite_complete() {
 
         env)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=($(compgen -W "list get set delete" -- "$cur"))
+                COMPREPLY=($(compgen -W "list get set delete audit" -- "$cur"))
             elif [[ $cword -eq 3 ]]; then
-                COMPREPLY=($(compgen -W "$(_forge_lite_domains)" -- "$cur"))
+                if [[ "${words[2]}" == "audit" ]]; then
+                    COMPREPLY=($(compgen -W "--fix" -- "$cur"))
+                else
+                    COMPREPLY=($(compgen -W "$(_forge_lite_domains)" -- "$cur"))
+                fi
             fi
             ;;
 
@@ -195,7 +199,7 @@ _forge_lite_complete() {
             ;;
 
         provision)
-            local flags="--php-default= --db-password= --redis-password= --node-version= --skip-reboot --force"
+            local flags="--php-default= --php-versions= --db-password= --db-buffer-pool= --db-flush-log= --redis-password= --node-version= --skip-reboot --force"
             COMPREPLY=($(compgen -W "$flags" -- "$cur"))
             [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
             ;;

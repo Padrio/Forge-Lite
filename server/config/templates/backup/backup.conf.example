@@ -1,0 +1,40 @@
+# forge-lite offsite backup configuration (OPTIONAL, DORMANT BY DEFAULT)
+# -----------------------------------------------------------------------------
+# Copy to /etc/forge-lite/backup.conf and fill in to enable offsite uploads of
+# the database dumps created by `forge-lite-db dump` / `forge-lite-db backup`:
+#
+#   sudo cp /etc/forge-lite/backup.conf.example /etc/forge-lite/backup.conf
+#   sudo chmod 600 /etc/forge-lite/backup.conf
+#   sudo nano  /etc/forge-lite/backup.conf
+#
+# If this file is ABSENT or BACKUP_S3_ENABLED=false, forge-lite keeps backups
+# LOCAL ONLY (the default, unchanged behaviour) — nothing is uploaded.
+#
+# Sourced as bash KEY=VALUE: no spaces around '=', quote values with spaces.
+# Keep this file 600 root:root — it holds S3 credentials.
+# -----------------------------------------------------------------------------
+
+# Master switch. Leave false (or omit this file) to stay local-only.
+BACKUP_S3_ENABLED=false
+
+# --- S3 / S3-compatible target (Hetzner Object Storage, Backblaze B2, AWS, …) -
+BACKUP_S3_BUCKET=
+BACKUP_S3_PREFIX=db-dumps           # optional key prefix inside the bucket
+BACKUP_S3_ENDPOINT=                 # e.g. https://fsn1.your-objectstorage.com
+BACKUP_S3_REGION=                   # e.g. fsn1 / us-east-1 (provider-specific)
+BACKUP_S3_PROVIDER=Other            # rclone S3 provider: AWS | Other | Minio | …
+BACKUP_S3_ACCESS_KEY=
+BACKUP_S3_SECRET_KEY=
+
+# --- Optional client-side encryption before upload --------------------------
+# Empty = upload the plain (gzipped) dump. 'age' or 'gpg' encrypt it first; the
+# matching tool + recipient must be present or the dump upload aborts loudly.
+BACKUP_ENCRYPT=                     # ""(none) | age | gpg
+BACKUP_AGE_RECIPIENT=               # age1... public key (when BACKUP_ENCRYPT=age)
+BACKUP_GPG_RECIPIENT=               # key id / email (when BACKUP_ENCRYPT=gpg)
+
+# -----------------------------------------------------------------------------
+# Upload tool: rclone (apt-get install -y rclone). forge-lite drives it purely
+# via environment (no on-disk rclone.conf, no credentials in the process list).
+# To use a different tool, edit upload_to_s3() in /usr/local/bin/forge-lite-db.
+# -----------------------------------------------------------------------------
