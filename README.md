@@ -1,6 +1,11 @@
-# forge-lite
+<p align="center">
+  <img src="docs/banner.jpg" alt="forge-lite — instant, zero-downtime Laravel deployment" width="100%">
+</p>
 
-A lightweight, bash-based server provisioning and deployment system for Laravel projects. A self-hosted alternative to Laravel Forge, targeting Ubuntu 24.04.
+<p align="center">
+  A lightweight, bash-based server provisioning and deployment system for Laravel projects.<br>
+  A self-hosted alternative to Laravel Forge, targeting Ubuntu 24.04.
+</p>
 
 ## Features
 
