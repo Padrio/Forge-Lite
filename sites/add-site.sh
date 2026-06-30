@@ -21,6 +21,7 @@ PHP_VERSION="8.3"
 QUEUE_WORKERS=2
 ENABLE_SSR=false
 ENABLE_HORIZON=false
+ENABLE_REVERB=false
 ENABLE_SCHEDULER=true
 SSL=false
 declare -a ALIASES=()
@@ -36,6 +37,7 @@ Options:
     --queue-workers=N       Number of queue worker processes (default: 2)
     --enable-ssr            Enable Inertia SSR process
     --enable-horizon        Enable Laravel Horizon (replaces queue workers)
+    --enable-reverb         Enable Laravel Reverb websocket daemon (port 8080)
     --no-scheduler          Disable Laravel scheduler cron
     --alias=DOMAIN          Additional server name / domain alias (repeatable)
     --ssl                   Issue SSL certificate via Let's Encrypt
@@ -52,6 +54,7 @@ while [[ $# -gt 0 ]]; do
         --queue-workers=*)  QUEUE_WORKERS="${1#*=}"; shift ;;
         --enable-ssr)       ENABLE_SSR=true; shift ;;
         --enable-horizon)   ENABLE_HORIZON=true; shift ;;
+        --enable-reverb)    ENABLE_REVERB=true; shift ;;
         --no-scheduler)     ENABLE_SCHEDULER=false; shift ;;
         --alias=*)          ALIASES+=("${1#*=}"); shift ;;
         --ssl)              SSL=true; shift ;;
@@ -252,7 +255,18 @@ if [[ "$ENABLE_SSR" == true ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Scheduler cron
+# 7. Laravel Reverb websocket daemon (optional)
+# ---------------------------------------------------------------------------
+if [[ "$ENABLE_REVERB" == true ]]; then
+    log_info "Creating Reverb supervisor config..."
+    render_template "${TEMPLATE_DIR}/supervisor/laravel-reverb.conf" \
+        "/etc/supervisor/conf.d/${DOMAIN}-reverb.conf" \
+        "DOMAIN=${DOMAIN}"
+    log_ok "Reverb config created (websocket daemon on 127.0.0.1:8080)"
+fi
+
+# ---------------------------------------------------------------------------
+# 8. Scheduler cron
 # ---------------------------------------------------------------------------
 if [[ "$ENABLE_SCHEDULER" == true ]]; then
     log_info "Creating scheduler cron..."
@@ -264,7 +278,7 @@ if [[ "$ENABLE_SCHEDULER" == true ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 8. SSL certificate (optional)
+# 9. SSL certificate (optional)
 # ---------------------------------------------------------------------------
 if [[ "$SSL" == true ]]; then
     log_info "Issuing SSL certificate..."
@@ -299,7 +313,7 @@ if [[ "$SSL" == true ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Pre-fill .env template
+# 10. Pre-fill .env template
 # ---------------------------------------------------------------------------
 REDIS_PASS=$(get_credential "REDIS_PASSWORD" 2>/dev/null) || REDIS_PASS=""
 APP_URL="http://${DOMAIN}"
@@ -360,7 +374,7 @@ enforce_secret_perms "${SITE_DIR}/shared/.env"
 log_ok ".env template created"
 
 # ---------------------------------------------------------------------------
-# 10. Save site config
+# 11. Save site config
 # ---------------------------------------------------------------------------
 mkdir -p /etc/forge-lite
 cat > "$SITE_CONFIG" <<CONF
@@ -375,6 +389,7 @@ DB_USER=${DB_USER}
 QUEUE_WORKERS=${QUEUE_WORKERS}
 ENABLE_HORIZON=${ENABLE_HORIZON}
 ENABLE_SSR=${ENABLE_SSR}
+ENABLE_REVERB=${ENABLE_REVERB}
 ENABLE_SCHEDULER=${ENABLE_SCHEDULER}
 SSL=${SSL}
 ALIASES=${ALIASES_CSV}
@@ -383,7 +398,7 @@ CONF
 log_ok "Site config saved to ${SITE_CONFIG}"
 
 # ---------------------------------------------------------------------------
-# 11. Reload services
+# 12. Reload services
 # ---------------------------------------------------------------------------
 log_info "Reloading services..."
 # Ensure this site's PHP-FPM version is enabled + running. Non-default versions

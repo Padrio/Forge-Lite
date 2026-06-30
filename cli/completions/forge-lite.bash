@@ -24,7 +24,7 @@ _forge_lite_complete() {
     }
 
     # Top-level commands
-    local commands="site deploy rollback runner db env ssl auth php provision update status --version"
+    local commands="site deploy rollback runner db env ssl auth reverb php provision update status --version"
 
     case "$cword" in
         1)
@@ -170,6 +170,14 @@ _forge_lite_complete() {
                         [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == *= ]] && compopt -o nospace
                         ;;
                 esac
+            fi
+            ;;
+
+        reverb)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "enable disable status" -- "$cur"))
+            elif [[ $cword -eq 3 ]]; then
+                COMPREPLY=($(compgen -W "$(_forge_lite_domains)" -- "$cur"))
             fi
             ;;
 

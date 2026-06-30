@@ -99,6 +99,7 @@ Commands:
     env <subcommand> [args]           .env variable management
     ssl <subcommand> [args]           SSL certificate management
     auth <subcommand> <domain>        Basic Auth management (enable, disable, add, remove, list, status)
+    reverb <subcommand> <domain>      Laravel Reverb websocket daemon (enable, disable, status)
     php <version>                     Switch default PHP version
     provision [flags]                 Provision the server
     update                            Reinstall CLI tools and completions
@@ -413,7 +414,7 @@ USAGE
 # ---------------------------------------------------------------------------
 cmd_update() {
     local cli_dir="${FORGE_LITE_DIR}/cli"
-    local tools=(php-switch forge-lite-db forge-lite-ssl forge-lite-env forge-lite-auth forge-lite)
+    local tools=(php-switch forge-lite-db forge-lite-ssl forge-lite-env forge-lite-auth forge-lite-reverb forge-lite)
 
     log_info "Reinstalling CLI tools from ${cli_dir} ..."
     for tool in "${tools[@]}"; do
@@ -526,6 +527,10 @@ case "$1" in
     auth)
         shift
         exec forge-lite-auth "$@"
+        ;;
+    reverb)
+        shift
+        exec forge-lite-reverb "$@"
         ;;
     php)
         shift
