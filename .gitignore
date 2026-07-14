@@ -16,6 +16,9 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Superpowers workflow state (local, generated)
+.superpowers/
+
 # Claude Code (local, machine-specific config — kept out of the repo)
 .claude/
 
