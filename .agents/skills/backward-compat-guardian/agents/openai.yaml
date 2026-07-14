@@ -1,0 +1,4 @@
+interface:
+  display_name: "Backward Compatibility Guardian"
+  short_description: "Review forge-lite cross-version compatibility"
+  default_prompt: "Use $backward-compat-guardian to review these forge-lite changes for cross-version upgrade risks."
