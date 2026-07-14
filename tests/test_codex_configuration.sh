@@ -69,7 +69,7 @@ test_readme_onboarding() {
     assert_file_contains "${readme}" \
         "Review and trust the project hooks with \`/hooks\`, and repeat this after hook changes." || return 1
     assert_file_contains "${readme}" \
-        "Confirm Context7 is available with \`/mcp\`." || return 1
+        "Confirm the project-scoped Context7 server \`deployment-context7\` is available with \`/mcp\`." || return 1
     assert_file_contains "${readme}" \
         "Existing users should move the stale \`${LEGACY_DIR}\` directory outside the repository as a backup, then remove it after verifying the Codex setup." || return 1
     assert_file_contains "${readme}" \
@@ -144,7 +144,9 @@ config_paths = (
     root / ".codex/agents/idempotency-auditor.toml",
 )
 parsed = {path: tomllib.loads(path.read_text()) for path in config_paths}
-context7 = parsed[root / ".codex/config.toml"]["mcp_servers"]["context7"]
+servers = parsed[root / ".codex/config.toml"]["mcp_servers"]
+assert "context7" not in servers, servers
+context7 = servers["deployment-context7"]
 assert context7 == {"url": "https://mcp.context7.com/mcp"}, context7
 PY
 }
@@ -252,7 +254,7 @@ run_test "narrow legacy local-settings ignore" test_narrow_legacy_ignore
 run_test "README Codex contributor onboarding" test_readme_onboarding
 run_test "no legacy artifacts and bounded root guidance" test_legacy_artifacts_and_guidance_size
 run_test "native Codex agent, skill, hook, and config paths" test_native_codex_paths
-run_test "JSON/TOML parsing and keyless Context7 configuration" test_json_toml_and_context7
+run_test "JSON/TOML parsing and collision-free keyless Context7 configuration" test_json_toml_and_context7
 run_test "hook scripts are executable and syntactically valid" test_hook_scripts_are_executable_and_valid
 run_test "pre-edit hook denies protected paths and allows harmless edits" test_pre_edit_hook_policy
 run_test "post-edit hook accepts valid shell and rejects invalid shell with exit 2" test_post_edit_hook_shell_results

@@ -200,7 +200,7 @@ The post-hook must lint every existing added/updated `*.sh` path with `bash -n`,
 Register `Edit|Write` for both hook events in `.codex/hooks.json`. Configure:
 
 ```toml
-[mcp_servers.context7]
+[mcp_servers.deployment-context7]
 url = "https://mcp.context7.com/mcp"
 ```
 
