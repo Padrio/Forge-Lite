@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".codex/hooks/pre-edit-credential-policy.sh",
+            "command": "\"$(git rev-parse --show-toplevel)/.codex/hooks/pre-edit-credential-policy.sh\"",
             "statusMessage": "Checking credential-file policy"
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".codex/hooks/post-edit-shell-lint.sh",
+            "command": "\"$(git rev-parse --show-toplevel)/.codex/hooks/post-edit-shell-lint.sh\"",
             "statusMessage": "Linting changed shell files"
           }
         ]
