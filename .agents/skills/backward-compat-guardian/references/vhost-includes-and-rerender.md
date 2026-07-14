@@ -77,6 +77,19 @@ Regex locations for PHP or static file extensions can still win, but ordinary
 application routes may be proxied to port 8080 and return 502 when no Reverb
 daemon is listening.
 
+The block is rendered
+UNCONDITIONALLY into every SSL vhost (independent of ENABLE_REVERB), so any SSL
+site re-rendered via `ssl issue`/`reverb enable`, or created new with `--ssl`,
+inherits it. Treat this as a historical installed-state fact, not only a
+current-source concern.
+
+Inspect legacy on-disk SSL vhosts even if current source is fixed. The block may
+already have persisted through any of these paths:
+
+- SSL issuance via `forge-lite ssl issue`
+- Reverb enablement via `forge-lite reverb enable`
+- new site creation with `--ssl`
+
 Prefer a Reverb-only per-site include and scope the proxy location to `/app/`
 when that matches the protocol requirements. Review whether the block is
 rendered conditionally; a block embedded unconditionally in every SSL vhost

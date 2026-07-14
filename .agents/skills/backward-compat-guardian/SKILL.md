@@ -60,7 +60,7 @@ Review every row against every applicable dimension:
 4. **Idempotency and interruption** — Re-running must converge. Guard appends, directory creation, credentials, migrations, and reloads. Analyze `kill -9` between each mutation and its marker.
 5. **Config format and parsing** — Preserve flat sourceable `KEY=VALUE` site configs. For renamed keys, read old and new formats. Test whether an older executable can read the post-change format during rollback.
 6. **Cron, systemd, Supervisor, and FPM** — Remove superseded definitions before enabling replacements. Prevent duplicate jobs, stale units/pools, and missing reread/update operations.
-7. **Catch-up migrations** — Make each migration independently idempotent and reachable from every skipped version. Write a completion marker only after all mutations and validation succeed.
+7. **Catch-up migrations** — Migrations must be ordered and each must be independently idempotent. Make every migration reachable from each skipped version. Write a completion marker only after all mutations and validation succeed.
 8. **Bug-fix cleanup** — Repair already-persisted broken state, not only the code path that created it. Cleanup must be harmless when the bug never manifested.
 9. **Destructive changes and deprecation** — Prefer two phases: support both plus warning, then removal with a direct migration for servers that skipped phase one.
 10. **Rollback safety** — Identify irreversible changes, preserve backups, validate before reload, and ensure older code can consume the resulting state. Preserve atomic `ln -sfn` deployment swaps.
