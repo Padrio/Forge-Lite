@@ -12,6 +12,8 @@ fi
 
 # Source lib/common.sh if available
 if [[ -f "${FORGE_LITE_DIR}/lib/common.sh" ]]; then
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
     source "${FORGE_LITE_DIR}/lib/common.sh"
 else
     # Minimal fallback for installed CLI
@@ -46,9 +48,67 @@ else
     }
 fi
 
-[[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
+if [[ -f "${FORGE_LITE_DIR}/lib/validation.sh" && -f "${FORGE_LITE_DIR}/lib/sites.sh" ]]; then
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
+    source "${FORGE_LITE_DIR}/lib/validation.sh"
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
+    source "${FORGE_LITE_DIR}/lib/sites.sh"
+else
+    validate_domain() {
+        local domain="$1"
+        [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$ ]] || \
+            die "Invalid domain name: ${domain}"
+    }
+    _site_config_value() {
+        local conf="$1" key="$2" line=""
+        line="$(grep -m1 "^${key}=" "$conf" 2>/dev/null)" || true
+        printf '%s' "${line#*=}"
+    }
+    resolve_site() {
+        local requested_domain="${1:-}" direct_conf primary_domain conf aliases alias
+        local available="" matches_display=""
+        local -a alias_list=() match_configs=() match_domains=()
+        [[ -n "$requested_domain" ]] || die "Domain required."
+        validate_domain "$requested_domain"
+        direct_conf="${SITE_CONFIG_DIR:-/etc/forge-lite}/${requested_domain}.conf"
+        if [[ -f "$direct_conf" ]]; then
+            primary_domain="$(_site_config_value "$direct_conf" DOMAIN)"
+            printf '%s\t%s' "${primary_domain:-$requested_domain}" "$direct_conf"
+            return 0
+        fi
+        for conf in "${SITE_CONFIG_DIR:-/etc/forge-lite}"/*.conf; do
+            [[ -f "$conf" ]] || continue
+            primary_domain="$(_site_config_value "$conf" DOMAIN)"
+            [[ -n "$primary_domain" ]] || primary_domain="${conf##*/}"
+            primary_domain="${primary_domain%.conf}"
+            available="${available:+${available}, }${primary_domain}"
+            aliases="$(_site_config_value "$conf" ALIASES)"
+            [[ -n "$aliases" ]] || continue
+            IFS=',' read -r -a alias_list <<< "$aliases"
+            for alias in "${alias_list[@]}"; do
+                alias="${alias#"${alias%%[![:space:]]*}"}"
+                alias="${alias%"${alias##*[![:space:]]}"}"
+                if [[ "$alias" == "$requested_domain" ]]; then
+                    match_configs+=("$conf")
+                    match_domains+=("$primary_domain")
+                    matches_display="${matches_display:+${matches_display}, }${primary_domain}"
+                    break
+                fi
+            done
+        done
+        [[ ${#match_configs[@]} -gt 0 ]] || \
+            die "Site '${requested_domain}' not found. Available: ${available:-<none>}"
+        [[ ${#match_configs[@]} -eq 1 ]] || \
+            die "Alias '${requested_domain}' is assigned to multiple sites: ${matches_display}. Fix ALIASES in ${SITE_CONFIG_DIR:-/etc/forge-lite}."
+        printf '%s\t%s' "${match_domains[0]}" "${match_configs[0]}"
+    }
+fi
 
-SITE_CONFIG_DIR="/etc/forge-lite"
+SITE_CONFIG_DIR="${SITE_CONFIG_DIR:-/etc/forge-lite}"
+NGINX_SITES_AVAILABLE="${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}"
+FORGE_LITE_SSL_BIN="${FORGE_LITE_SSL_BIN:-forge-lite-ssl}"
 
 # Version
 FORGE_LITE_VERSION=""
@@ -173,11 +233,36 @@ cmd_site_list() {
 # Helper: update the server_name line in an existing vhost config
 _update_vhost_server_names() {
     local domain="$1" server_names="$2"
-    local vhost="/etc/nginx/sites-available/${domain}.conf"
+    local vhost="${NGINX_SITES_AVAILABLE}/${domain}.conf"
     [[ -f "$vhost" ]] || return 0
 
     # Replace all server_name lines (HTTP redirect + main block)
     sed -i "s|server_name .*\$|server_name ${server_names};|" "$vhost"
+}
+
+# Update server_name on disk, but restore the previous vhost if validation or
+# reload fails. A failed reload keeps the old runtime config; restoring the
+# file also keeps the next reload/restart safe.
+_update_vhost_server_names_transactional() {
+    local domain="$1" server_names="$2"
+    local vhost="${NGINX_SITES_AVAILABLE}/${domain}.conf" backup_vhost=""
+    [[ -f "$vhost" ]] || return 0
+
+    backup_vhost="$(mktemp)"
+    cp -p "$vhost" "$backup_vhost"
+    _update_vhost_server_names "$domain" "$server_names"
+
+    if ! nginx -t 2>/dev/null; then
+        mv "$backup_vhost" "$vhost"
+        return 1
+    fi
+    if ! systemctl reload nginx; then
+        mv "$backup_vhost" "$vhost"
+        nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    rm -f "$backup_vhost"
 }
 
 # Helper: read comma-separated ALIASES from site config into space-separated string
@@ -209,12 +294,21 @@ cmd_site_alias() {
     done
 
     [[ -n "$domain" ]] || die "Domain is required."
-    local site_conf="${SITE_CONFIG_DIR}/${domain}.conf"
-    [[ -f "$site_conf" ]] || die "Site config not found: ${site_conf}"
+    local requested_domain="$domain" resolved site_conf
+    if ! resolved="$(resolve_site "$requested_domain")"; then
+        return 1
+    fi
+    domain="${resolved%%$'\t'*}"
+    site_conf="${resolved#*$'\t'}"
+    if [[ "$requested_domain" != "$domain" ]]; then
+        log_info "${requested_domain} is an alias of ${domain}; aliases are managed for site ${domain}."
+    fi
 
     # Read current aliases
-    local current_aliases=""
-    current_aliases=$(grep "^ALIASES=" "$site_conf" 2>/dev/null | head -1 | cut -d= -f2-) || true
+    local current_aliases ssl_enabled
+    current_aliases="$(_site_config_value "$site_conf" ALIASES)"
+    ssl_enabled="$(_site_config_value "$site_conf" SSL)"
+    ssl_enabled="${ssl_enabled:-false}"
 
     if [[ "$list_only" == true ]]; then
         local server_names
@@ -233,10 +327,12 @@ cmd_site_alias() {
     fi
 
     if [[ -n "$add_alias" ]]; then
+        validate_domain "$add_alias"
         # Check alias not already present
         if [[ ",$current_aliases," == *",$add_alias,"* ]]; then
             die "Alias '${add_alias}' already exists for ${domain}."
         fi
+        local previous_aliases="$current_aliases"
         # Append to aliases
         if [[ -n "$current_aliases" ]]; then
             current_aliases="${current_aliases},${add_alias}"
@@ -245,19 +341,28 @@ cmd_site_alias() {
         fi
         config_upsert "$site_conf" "ALIASES" "$current_aliases"
 
+        if [[ "$ssl_enabled" == true ]]; then
+            log_info "Expanding the SSL certificate before activating alias '${add_alias}'..."
+            if ! "$FORGE_LITE_SSL_BIN" issue "$domain"; then
+                config_upsert "$site_conf" "ALIASES" "$previous_aliases"
+                die "SSL certificate update failed; alias '${add_alias}' was not activated and the site config was restored."
+            fi
+            log_ok "Alias '${add_alias}' added for ${domain}"
+            log_info "Server names: $(_build_server_names "$domain" "$current_aliases")"
+            return 0
+        fi
+
         local server_names
         server_names=$(_build_server_names "$domain" "$current_aliases")
-        _update_vhost_server_names "$domain" "$server_names"
-
-        if nginx -t 2>/dev/null; then
-            systemctl reload nginx
-        else
-            die "NGINX config test failed after adding alias."
+        if ! _update_vhost_server_names_transactional "$domain" "$server_names"; then
+            config_upsert "$site_conf" "ALIASES" "$previous_aliases"
+            die "NGINX config test failed after adding alias; restored the previous config and vhost."
         fi
         log_ok "Alias '${add_alias}' added for ${domain}"
         log_info "Server names: ${server_names}"
 
     elif [[ -n "$remove_alias" ]]; then
+        validate_domain "$remove_alias"
         # Remove alias from comma-separated list
         local new_aliases=""
         local found=false
@@ -277,12 +382,9 @@ cmd_site_alias() {
 
         local server_names
         server_names=$(_build_server_names "$domain" "$new_aliases")
-        _update_vhost_server_names "$domain" "$server_names"
-
-        if nginx -t 2>/dev/null; then
-            systemctl reload nginx
-        else
-            die "NGINX config test failed after removing alias."
+        if ! _update_vhost_server_names_transactional "$domain" "$server_names"; then
+            config_upsert "$site_conf" "ALIASES" "$current_aliases"
+            die "NGINX config test failed after removing alias; restored the previous config and vhost."
         fi
         log_ok "Alias '${remove_alias}' removed from ${domain}"
         log_info "Server names: ${server_names}"
@@ -376,6 +478,8 @@ cmd_runner() {
     [[ $# -ge 1 ]] || die "Usage: forge-lite runner <setup|remove|status|list> [args]"
     local sub="$1"; shift
 
+    # Module path is selected at runtime.
+    # shellcheck disable=SC1091
     source "${FORGE_LITE_DIR}/server/modules/github-runner.sh"
 
     case "$sub" in
@@ -499,9 +603,11 @@ cmd_status() {
 # ---------------------------------------------------------------------------
 # Main dispatch
 # ---------------------------------------------------------------------------
-[[ $# -ge 1 ]] || usage
+main() {
+    [[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
+    [[ $# -ge 1 ]] || usage
 
-case "$1" in
+    case "$1" in
     site)
         shift; cmd_site "$@" ;;
     deploy)
@@ -556,7 +662,12 @@ case "$1" in
     -h|--help)
         usage
         ;;
-    *)
-        die "Unknown command: $1. Run 'forge-lite --help' for usage."
-        ;;
-esac
+        *)
+            die "Unknown command: $1. Run 'forge-lite --help' for usage."
+            ;;
+    esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

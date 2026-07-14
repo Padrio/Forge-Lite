@@ -5,7 +5,15 @@ set -euo pipefail
 # Source lib/common.sh if available
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR}/../lib/common.sh" ]]; then
-    export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    export FORGE_LITE_DIR
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
+    source "${FORGE_LITE_DIR}/lib/common.sh"
+elif [[ -f "/opt/forge-lite/lib/common.sh" ]]; then
+    export FORGE_LITE_DIR="/opt/forge-lite"
+    # /opt is the installed layout.
+    # shellcheck disable=SC1091
     source "${FORGE_LITE_DIR}/lib/common.sh"
 else
     # Minimal fallback for installed CLI
@@ -37,7 +45,63 @@ else
     }
 fi
 
-[[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
+if [[ -n "${FORGE_LITE_DIR:-}" && -f "${FORGE_LITE_DIR}/lib/validation.sh" && -f "${FORGE_LITE_DIR}/lib/sites.sh" ]]; then
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
+    source "${FORGE_LITE_DIR}/lib/validation.sh"
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
+    source "${FORGE_LITE_DIR}/lib/sites.sh"
+else
+    validate_domain() {
+        local domain="$1"
+        [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$ ]] || \
+            die "Invalid domain name: ${domain}"
+    }
+    _site_config_value() {
+        local conf="$1" key="$2" line=""
+        line="$(grep -m1 "^${key}=" "$conf" 2>/dev/null)" || true
+        printf '%s' "${line#*=}"
+    }
+    resolve_site() {
+        local requested_domain="${1:-}" direct_conf primary_domain conf aliases alias
+        local available="" matches_display=""
+        local -a alias_list=() match_configs=() match_domains=()
+        [[ -n "$requested_domain" ]] || die "Domain required."
+        validate_domain "$requested_domain"
+        direct_conf="${SITE_CONFIG_DIR:-/etc/forge-lite}/${requested_domain}.conf"
+        if [[ -f "$direct_conf" ]]; then
+            primary_domain="$(_site_config_value "$direct_conf" DOMAIN)"
+            printf '%s\t%s' "${primary_domain:-$requested_domain}" "$direct_conf"
+            return 0
+        fi
+        for conf in "${SITE_CONFIG_DIR:-/etc/forge-lite}"/*.conf; do
+            [[ -f "$conf" ]] || continue
+            primary_domain="$(_site_config_value "$conf" DOMAIN)"
+            [[ -n "$primary_domain" ]] || primary_domain="${conf##*/}"
+            primary_domain="${primary_domain%.conf}"
+            available="${available:+${available}, }${primary_domain}"
+            aliases="$(_site_config_value "$conf" ALIASES)"
+            [[ -n "$aliases" ]] || continue
+            IFS=',' read -r -a alias_list <<< "$aliases"
+            for alias in "${alias_list[@]}"; do
+                alias="${alias#"${alias%%[![:space:]]*}"}"
+                alias="${alias%"${alias##*[![:space:]]}"}"
+                if [[ "$alias" == "$requested_domain" ]]; then
+                    match_configs+=("$conf")
+                    match_domains+=("$primary_domain")
+                    matches_display="${matches_display:+${matches_display}, }${primary_domain}"
+                    break
+                fi
+            done
+        done
+        [[ ${#match_configs[@]} -gt 0 ]] || \
+            die "Site '${requested_domain}' not found. Available: ${available:-<none>}"
+        [[ ${#match_configs[@]} -eq 1 ]] || \
+            die "Alias '${requested_domain}' is assigned to multiple sites: ${matches_display}. Fix ALIASES in ${SITE_CONFIG_DIR:-/etc/forge-lite}."
+        printf '%s\t%s' "${match_domains[0]}" "${match_configs[0]}"
+    }
+fi
 
 usage() {
     cat <<'USAGE'
@@ -57,126 +121,209 @@ FORGE_LITE_TEMPLATES="/opt/forge-lite/server/config/templates"
 if [[ -d "${SCRIPT_DIR}/../server/config/templates" ]]; then
     FORGE_LITE_TEMPLATES="${SCRIPT_DIR}/../server/config/templates"
 fi
+LE_LIVE_DIR="${LE_LIVE_DIR:-/etc/letsencrypt/live}"
+NGINX_SITES_AVAILABLE="${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}"
 
-cmd_issue() {
-    local domain="$1"
-    [[ -n "$domain" ]] || die "Domain required."
+# Print only final address records from dig output. CNAME targets never match
+# either address syntax and are intentionally ignored.
+_resolve_dns_addresses() {
+    local domain="$1" record_type="$2" record
+    while IFS= read -r record; do
+        case "$record_type" in
+            A)
+                [[ "$record" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && printf '%s\n' "$record"
+                ;;
+            AAAA)
+                if [[ "$record" == *:* && "$record" =~ ^[0-9A-Fa-f:.]+$ ]]; then
+                    printf '%s\n' "$record"
+                fi
+                ;;
+        esac
+    done < <(dig +short "$domain" "$record_type" 2>/dev/null || true)
+}
 
-    # Check DNS resolution (A + AAAA records)
-    local server_ipv4 server_ipv6 domain_ipv4 domain_ipv6
-    server_ipv4=$(get_server_ipv4 2>/dev/null) || server_ipv4=""
-    server_ipv6=$(get_server_ipv6 2>/dev/null) || server_ipv6=""
-    domain_ipv4=$(dig +short "$domain" A 2>/dev/null | head -1) || domain_ipv4=""
-    domain_ipv6=$(dig +short "$domain" AAAA 2>/dev/null | head -1) || domain_ipv6=""
+_address_list_contains() {
+    local addresses="$1" expected="$2" address
+    while IFS= read -r address; do
+        [[ -n "$address" && "$address" == "$expected" ]] && return 0
+    done <<< "$addresses"
+    return 1
+}
 
-    # Check A record
-    if [[ -n "$server_ipv4" && -n "$domain_ipv4" && "$server_ipv4" != "$domain_ipv4" ]]; then
-        log_warn "A record for '${domain}' points to ${domain_ipv4}, but this server is ${server_ipv4}"
-        log_warn "Certbot will likely fail. Point your A record to ${server_ipv4} first."
-    elif [[ -z "$domain_ipv4" ]]; then
+_format_dns_addresses() {
+    local addresses="$1" address formatted=""
+    while IFS= read -r address; do
+        [[ -n "$address" ]] || continue
+        formatted="${formatted:+${formatted}, }${address}"
+    done <<< "$addresses"
+    printf '%s' "$formatted"
+}
+
+_check_dns_records() {
+    local domain="$1" server_ipv4="$2" server_ipv6="$3"
+    local domain_ipv4s domain_ipv6s found
+    domain_ipv4s="$(_resolve_dns_addresses "$domain" A)"
+    domain_ipv6s="$(_resolve_dns_addresses "$domain" AAAA)"
+
+    if [[ -z "$domain_ipv4s" ]]; then
         log_warn "No A record found for '${domain}'. Certbot will likely fail."
         [[ -n "$server_ipv4" ]] && log_warn "Point your A record to ${server_ipv4}"
+    elif [[ -n "$server_ipv4" ]] && ! _address_list_contains "$domain_ipv4s" "$server_ipv4"; then
+        found="$(_format_dns_addresses "$domain_ipv4s")"
+        log_warn "A record for '${domain}' points to ${found}, but this server is ${server_ipv4}"
+        log_warn "Certbot will likely fail. Point an A record to ${server_ipv4} first."
     fi
 
-    # Check AAAA record (only if server has IPv6)
     if [[ -n "$server_ipv6" ]]; then
-        if [[ -n "$domain_ipv6" && "$server_ipv6" != "$domain_ipv6" ]]; then
-            log_warn "AAAA record for '${domain}' points to ${domain_ipv6}, but this server is ${server_ipv6}"
-        elif [[ -z "$domain_ipv6" ]]; then
+        if [[ -z "$domain_ipv6s" ]]; then
             log_info "No AAAA record for '${domain}'. IPv6 visitors won't reach this site."
             log_info "Add an AAAA record pointing to ${server_ipv6} for full Dual-Stack."
+        elif ! _address_list_contains "$domain_ipv6s" "$server_ipv6"; then
+            found="$(_format_dns_addresses "$domain_ipv6s")"
+            log_warn "AAAA record for '${domain}' points to ${found}, but this server is ${server_ipv6}"
         fi
     fi
+}
 
-    # Read aliases from site config if available
-    local site_aliases=""
-    local site_conf="/etc/forge-lite/${domain}.conf"
-    if [[ -f "$site_conf" ]]; then
-        site_aliases=$(grep "^ALIASES=" "$site_conf" 2>/dev/null | head -1 | cut -d= -f2-) || true
+_verify_certificate_names() {
+    local cert_file="$1"
+    shift
+    local domain missing=""
+    for domain in "$@"; do
+        if ! openssl x509 -in "$cert_file" -noout -checkhost "$domain" >/dev/null 2>&1; then
+            missing="${missing:+${missing}, }${domain}"
+        fi
+    done
+    [[ -z "$missing" ]] || die "Certificate '${cert_file}' does not cover: ${missing}"
+}
+
+_activate_ssl_vhost() {
+    local primary_domain="$1" server_names="$2" fpm_socket="$3"
+    local template="${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf"
+    local target="${NGINX_SITES_AVAILABLE}/${primary_domain}.conf"
+    local tmp_vhost backup_vhost="" had_existing=false
+
+    [[ -f "$template" ]] || die "SSL vhost template not found: ${template}"
+    tmp_vhost="$(mktemp)"
+    sed -e "s|{{DOMAIN}}|${primary_domain}|g" \
+        -e "s|{{SERVER_NAMES}}|${server_names}|g" \
+        -e "s|{{FPM_SOCKET}}|${fpm_socket}|g" \
+        "$template" > "$tmp_vhost"
+    chmod 644 "$tmp_vhost"
+
+    if [[ -f "$target" ]]; then
+        had_existing=true
+        backup_vhost="$(mktemp)"
+        cp -p "$target" "$backup_vhost"
+    fi
+    mv "$tmp_vhost" "$target"
+
+    if ! nginx -t; then
+        if [[ "$had_existing" == true ]]; then
+            mv "$backup_vhost" "$target"
+        else
+            rm -f "$target"
+        fi
+        die "NGINX config test failed; restored the previous vhost."
     fi
 
-    # Build certbot -d flags for primary domain + aliases
-    local -a certbot_domains=(-d "$domain")
+    if ! systemctl reload nginx; then
+        if [[ "$had_existing" == true ]]; then
+            mv "$backup_vhost" "$target"
+        else
+            rm -f "$target"
+        fi
+        nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+        die "NGINX reload failed; restored the previous vhost."
+    fi
+
+    [[ -z "$backup_vhost" ]] || rm -f "$backup_vhost"
+    log_ok "NGINX vhost updated to SSL for ${primary_domain}"
+}
+
+cmd_issue() {
+    local requested_domain="${1:-}" resolved primary_domain site_conf
+    [[ -n "$requested_domain" ]] || die "Domain required."
+    if ! resolved="$(resolve_site "$requested_domain")"; then
+        return 1
+    fi
+    primary_domain="${resolved%%$'\t'*}"
+    site_conf="${resolved#*$'\t'}"
+    if [[ "$requested_domain" != "$primary_domain" ]]; then
+        log_info "${requested_domain} is an alias of ${primary_domain}; SSL is managed for site ${primary_domain}."
+    fi
+
+    local site_aliases alias candidate existing already_present
+    local -a alias_list=() certificate_domains=("$primary_domain") certbot_domains=(-d "$primary_domain")
+    site_aliases="$(_site_config_value "$site_conf" ALIASES)"
     if [[ -n "$site_aliases" ]]; then
-        local IFS=','
-        for alias in $site_aliases; do
-            [[ -n "$alias" ]] && certbot_domains+=(-d "$alias")
+        IFS=',' read -r -a alias_list <<< "$site_aliases"
+        for alias in "${alias_list[@]}"; do
+            alias="${alias#"${alias%%[![:space:]]*}"}"
+            alias="${alias%"${alias##*[![:space:]]}"}"
+            [[ -n "$alias" ]] || continue
+            validate_domain "$alias"
+            already_present=false
+            for existing in "${certificate_domains[@]}"; do
+                [[ "$existing" == "$alias" ]] && already_present=true
+            done
+            if [[ "$already_present" == false ]]; then
+                certificate_domains+=("$alias")
+                certbot_domains+=(-d "$alias")
+            fi
         done
-        unset IFS
     fi
 
-    # Issue certificate
-    log_info "Requesting SSL certificate for ${domain}..."
-    certbot certonly --nginx \
+    local server_ipv4 server_ipv6
+    server_ipv4="$(get_server_ipv4 2>/dev/null)" || server_ipv4=""
+    server_ipv6="$(get_server_ipv6 2>/dev/null)" || server_ipv6=""
+    for candidate in "${certificate_domains[@]}"; do
+        _check_dns_records "$candidate" "$server_ipv4" "$server_ipv6"
+    done
+
+    log_info "Requesting SSL certificate for ${primary_domain}..."
+    if ! certbot certonly --nginx \
+        --cert-name "$primary_domain" \
         "${certbot_domains[@]}" \
         --non-interactive \
         --agree-tos \
         --expand \
-        --register-unsafely-without-email
+        --register-unsafely-without-email; then
+        die "Certbot failed for site ${primary_domain}. The existing vhost was not changed."
+    fi
 
-    # Verify certificate was obtained
-    if [[ ! -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ]]; then
+    local cert_file="${LE_LIVE_DIR}/${primary_domain}/fullchain.pem"
+    if [[ ! -f "$cert_file" ]]; then
         die "SSL certificate was not obtained. Verify DNS and try again."
     fi
+    _verify_certificate_names "$cert_file" "${certificate_domains[@]}"
 
-    # Switch nginx vhost to SSL variant if site config exists
-    local site_conf="/etc/forge-lite/${domain}.conf"
-    if [[ -f "$site_conf" ]]; then
-        # shellcheck disable=SC1090
-        source "$site_conf"
-        local php_version="${PHP_VERSION:-8.3}"
-        local fpm_socket="${FPM_SOCKET:-/var/run/php/php${php_version}-${domain}-fpm.sock}"
+    local php_version fpm_socket server_names site_dir env_file escaped_domain
+    php_version="$(_site_config_value "$site_conf" PHP_VERSION)"
+    php_version="${php_version:-8.3}"
+    fpm_socket="$(_site_config_value "$site_conf" FPM_SOCKET)"
+    fpm_socket="${fpm_socket:-/var/run/php/php${php_version}-${primary_domain}-fpm.sock}"
+    server_names="${certificate_domains[*]}"
+    _activate_ssl_vhost "$primary_domain" "$server_names" "$fpm_socket"
 
-        [[ -f "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" ]] || \
-            die "SSL vhost template not found: ${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf"
+    if grep -q "^SSL=" "$site_conf" 2>/dev/null; then
+        sed -i "s|^SSL=.*|SSL=true|" "$site_conf"
+    else
+        echo "SSL=true" >> "$site_conf"
+    fi
 
-        # Build server_names (primary + aliases)
-        local server_names="${domain}"
-        if [[ -n "${ALIASES:-}" ]]; then
-            server_names="${domain} ${ALIASES//,/ }"
-        fi
-
-        local tmp_vhost
-        tmp_vhost="$(mktemp)"
-        sed -e "s|{{DOMAIN}}|${domain}|g" \
-            -e "s|{{SERVER_NAMES}}|${server_names}|g" \
-            -e "s|{{FPM_SOCKET}}|${fpm_socket}|g" \
-            "${FORGE_LITE_TEMPLATES}/nginx/vhost-ssl.conf" \
-            > "$tmp_vhost"
-        mv "$tmp_vhost" "/etc/nginx/sites-available/${domain}.conf"
-        chmod 644 "/etc/nginx/sites-available/${domain}.conf"
-
-        # Ensure Basic Auth include is present
-        if ! grep -q 'forge-lite/auth/' "/etc/nginx/sites-available/${domain}.conf" 2>/dev/null; then
-            sed -i '/location \/ {/i\    # Basic Auth (managed by forge-lite auth)\n    include /etc/forge-lite/auth/'"${domain}"'.conf;' \
-                "/etc/nginx/sites-available/${domain}.conf"
-            mkdir -p /etc/forge-lite/auth
-            touch "/etc/forge-lite/auth/${domain}.conf"
-        fi
-
-        nginx -t && systemctl reload nginx
-        log_ok "NGINX vhost updated to SSL for ${domain}"
-
-        # Update site config — replace existing SSL value
-        if grep -q "^SSL=" "$site_conf" 2>/dev/null; then
-            sed -i "s|^SSL=.*|SSL=true|" "$site_conf"
-        else
-            echo "SSL=true" >> "$site_conf"
-        fi
-
-        # Update APP_URL in .env (escape dots for grep/sed regex safety)
-        local site_dir="${SITE_DIR:-/home/deployer/sites/${domain}}"
-        local env_file="${site_dir}/shared/.env"
-        local escaped_domain="${domain//./\\.}"
-        if [[ -f "$env_file" ]]; then
-            if grep -q "^APP_URL=http://${escaped_domain}" "$env_file" 2>/dev/null; then
-                sed -i "s|^APP_URL=http://${escaped_domain}|APP_URL=https://${domain}|" "$env_file"
-                log_ok "Updated APP_URL to https://${domain}"
-            fi
+    site_dir="$(_site_config_value "$site_conf" SITE_DIR)"
+    site_dir="${site_dir:-/home/deployer/sites/${primary_domain}}"
+    env_file="${site_dir}/shared/.env"
+    escaped_domain="${primary_domain//./\\.}"
+    if [[ -f "$env_file" ]]; then
+        if grep -q "^APP_URL=http://${escaped_domain}" "$env_file" 2>/dev/null; then
+            sed -i "s|^APP_URL=http://${escaped_domain}|APP_URL=https://${primary_domain}|" "$env_file"
+            log_ok "Updated APP_URL to https://${primary_domain}"
         fi
     fi
 
-    log_ok "SSL certificate issued for ${domain}"
+    log_ok "SSL certificate ready for ${primary_domain}"
 }
 
 cmd_remove() {
@@ -283,14 +430,20 @@ cmd_status() {
         -subject -issuer -dates -fingerprint
 }
 
-# Main dispatch
-[[ $# -ge 1 ]] || usage
+main() {
+    [[ $EUID -eq 0 ]] || die "This script must be run as root (use sudo)."
+    [[ $# -ge 1 ]] || usage
 
-case "$1" in
-    issue)  cmd_issue "${2:-}" ;;
-    remove) cmd_remove "${2:-}" ;;
-    renew)  cmd_renew "${2:-}" ;;
-    status) cmd_status "${2:-}" ;;
-    -h|--help) usage ;;
-    *)      die "Unknown command: $1. Run with --help for usage." ;;
-esac
+    case "$1" in
+        issue)  cmd_issue "${2:-}" ;;
+        remove) cmd_remove "${2:-}" ;;
+        renew)  cmd_renew "${2:-}" ;;
+        status) cmd_status "${2:-}" ;;
+        -h|--help) usage ;;
+        *)      die "Unknown command: $1. Run with --help for usage." ;;
+    esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

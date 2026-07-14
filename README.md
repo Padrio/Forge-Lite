@@ -85,10 +85,24 @@ Options:
 **Manage domain aliases (on existing sites):**
 ```bash
 sudo forge-lite site alias example.com --add=www.example.com
+sudo forge-lite ssl issue example.com
+
 sudo forge-lite site alias example.com --add=app.example.com
 sudo forge-lite site alias example.com --list
 sudo forge-lite site alias example.com --remove=app.example.com
 ```
+
+The first two commands are the standard alias/SSL workflow. On a site that
+already has SSL enabled, `site alias --add` expands and verifies the primary
+site's certificate *before* the alias is activated in NGINX; if certificate
+issuance fails, the alias change is rolled back. The explicit `ssl issue` call
+is therefore idempotent for SSL-enabled sites and enables SSL after adding an
+alias to an HTTP-only site.
+
+`forge-lite ssl issue` also accepts a known alias. For example,
+`forge-lite ssl issue www.example.com` resolves `www.example.com` to its
+primary site, requests the primary domain plus all configured aliases, and
+keeps the certificate lineage under `example.com`.
 
 ### 4. Deploy
 
@@ -235,7 +249,8 @@ swapping rclone for `aws-cli`/`s3cmd` is a one-function change.
 
 ### forge-lite-ssl
 ```bash
-sudo forge-lite-ssl issue example.com    # Obtain certificate
+sudo forge-lite ssl issue example.com        # Obtain or expand the site's certificate
+sudo forge-lite ssl issue www.example.com    # Known alias resolves to its primary site
 sudo forge-lite-ssl renew example.com    # Force renew
 sudo forge-lite-ssl status example.com   # Show certificate info
 ```
