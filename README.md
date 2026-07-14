@@ -23,6 +23,12 @@
 - Root access (or sudo)
 - SSH key-based access configured
 
+## Codex contributor setup
+
+Codex project configuration loads only after the repository is trusted. Review and trust the project hooks with `/hooks`, and repeat this after hook changes. Confirm Context7 is available with `/mcp`.
+
+Existing users should move the stale `.claude` directory outside the repository as a backup, then remove it after verifying the Codex setup. Start a new Codex session after setup changes.
+
 ## Quick Start
 
 ### Cloud-init (fully automated)

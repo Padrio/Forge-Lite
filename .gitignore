@@ -16,6 +16,9 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Legacy machine-local configuration
+/.claude/settings.local.json
+
 # Superpowers workflow state (local, generated)
 .superpowers/
 
