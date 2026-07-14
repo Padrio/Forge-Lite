@@ -1,0 +1,4 @@
+interface:
+  display_name: "Idempotency Auditor"
+  short_description: "Audit forge-lite same-version re-run safety"
+  default_prompt: "Use $idempotency-auditor to review these forge-lite changes for same-version re-run hazards."
