@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".codex/hooks/pre-edit-credential-policy.sh",
+            "statusMessage": "Checking credential-file policy"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".codex/hooks/post-edit-shell-lint.sh",
+            "statusMessage": "Linting changed shell files"
+          }
+        ]
+      }
+    ]
+  }
+}
