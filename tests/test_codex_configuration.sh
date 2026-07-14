@@ -102,6 +102,26 @@ test_legacy_artifacts_and_guidance_size() {
     }
 }
 
+test_no_active_legacy_markers() {
+    local marker_pattern output status
+
+    marker_pattern="${LEGACY_FAMILY}|anth""ropic|\\.${LEGACY_FAMILY}"
+    if output="$(rg -n -i --hidden "${marker_pattern}" "${PROJECT_ROOT}" \
+        --glob '!.git/**' \
+        --glob '!.superpowers/**' \
+        --glob '!docs/superpowers/specs/2026-07-14-codex-migration-design.md' \
+        --glob '!docs/superpowers/plans/2026-07-14-codex-migration.md' \
+        --glob '!README.md' \
+        --glob '!.gitignore' 2>&1)"; then
+        fail "Active legacy project marker remains: ${output}"
+        return 1
+    else
+        status=$?
+    fi
+
+    assert_equals "1" "${status}"
+}
+
 test_native_codex_paths() {
     local path
     local -a required_paths=(
@@ -133,6 +153,7 @@ test_native_codex_paths() {
 test_json_toml_and_context7() {
     jq empty "${PROJECT_ROOT}/.codex/hooks.json" || return 1
     python3 - "${PROJECT_ROOT}" <<'PY'
+import json
 import pathlib
 import sys
 import tomllib
@@ -148,6 +169,27 @@ servers = parsed[root / ".codex/config.toml"]["mcp_servers"]
 assert "context7" not in servers, servers
 context7 = servers["deployment-context7"]
 assert context7 == {"url": "https://mcp.context7.com/mcp"}, context7
+
+hooks = json.loads((root / ".codex/hooks.json").read_text())["hooks"]
+expected_hooks = {
+    "PreToolUse": (
+        "Edit|Write",
+        '"$(git rev-parse --show-toplevel)/.codex/hooks/pre-edit-credential-policy.sh"',
+    ),
+    "PostToolUse": (
+        "Edit|Write",
+        '"$(git rev-parse --show-toplevel)/.codex/hooks/post-edit-shell-lint.sh"',
+    ),
+}
+for event, (expected_matcher, expected_command) in expected_hooks.items():
+    registrations = hooks[event]
+    assert len(registrations) == 1, (event, registrations)
+    registration = registrations[0]
+    assert registration["matcher"] == expected_matcher, (event, registration)
+    commands = registration["hooks"]
+    assert len(commands) == 1, (event, commands)
+    assert commands[0]["type"] == "command", (event, commands[0])
+    assert commands[0]["command"] == expected_command, (event, commands[0])
 PY
 }
 
@@ -253,8 +295,9 @@ test_post_edit_hook_shell_results() {
 run_test "narrow legacy local-settings ignore" test_narrow_legacy_ignore
 run_test "README Codex contributor onboarding" test_readme_onboarding
 run_test "no legacy artifacts and bounded root guidance" test_legacy_artifacts_and_guidance_size
+run_test "no active legacy project markers" test_no_active_legacy_markers
 run_test "native Codex agent, skill, hook, and config paths" test_native_codex_paths
-run_test "JSON/TOML parsing and collision-free keyless Context7 configuration" test_json_toml_and_context7
+run_test "hook wiring plus JSON/TOML and collision-free Context7 configuration" test_json_toml_and_context7
 run_test "hook scripts are executable and syntactically valid" test_hook_scripts_are_executable_and_valid
 run_test "pre-edit hook denies protected paths and allows harmless edits" test_pre_edit_hook_policy
 run_test "post-edit hook accepts valid shell and rejects invalid shell with exit 2" test_post_edit_hook_shell_results

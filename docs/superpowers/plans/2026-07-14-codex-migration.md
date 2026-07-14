@@ -234,7 +234,7 @@ Delete all files listed by `rg --files -uu .claude`, then remove empty directori
 ```bash
 ! test -e .claude
 ! test -e CLAUDE.md
-! rg -n -i 'claude|anthropic|\.claude' . --hidden -g '!.git/**' -g '!docs/superpowers/specs/2026-07-14-codex-migration-design.md' -g '!docs/superpowers/plans/2026-07-14-codex-migration.md'
+! rg -n -i 'claude|anthropic|\.claude' . --hidden -g '!.git/**' -g '!.superpowers/**' -g '!docs/superpowers/specs/2026-07-14-codex-migration-design.md' -g '!docs/superpowers/plans/2026-07-14-codex-migration.md' -g '!README.md' -g '!.gitignore'
 git diff --check
 ```
 
