@@ -1,4 +1,4 @@
-# forge-lite — Architecture & Engineering Standards
+# forge-lite — Codex Project Guidance
 
 > Bash-based server provisioning and zero-downtime deployment system for Laravel.
 > Target: Ubuntu 24.04. Alternative to Laravel Forge.
@@ -516,3 +516,9 @@ bash -c 'source lib/common.sh && source server/modules/<name>.sh && type provisi
 | Nested `if` chains | Guard clauses with early `return`/`die` |
 | Global mutable state | `local` variables inside functions |
 | Silent failures (`2>/dev/null`) without `\|\| true` | Explicit error handling or documented suppression |
+
+## 14. Specialist Reviews
+
+- For deployed-component compatibility, use `$backward-compat-guardian` and delegate an independent review to the `backward-compat-guardian` custom agent when subagents are available.
+- For state-changing operations, use `$idempotency-auditor` and delegate an independent review to the `idempotency-auditor` custom agent when subagents are available.
+- Treat both reviews as required when a change has both cross-version and same-version re-run risks.

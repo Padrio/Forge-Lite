@@ -4,13 +4,13 @@
 
 **Goal:** Extend `cli/forge-lite-db` with five domain-aware subcommands (`dump`, `import`, `sync`, `shell`, `info`), introduce a shared `lib/sites.sh` helper, and add `resolve_mariadb_root_password()` to `lib/credentials.sh` for interactive fallback. Existing subcommands keep their signatures and output, but credential loading becomes lazy.
 
-**Architecture:** Pure bash, sourced libraries + executable CLI. The CLI works in two modes: when invoked from the repo (`lib/*.sh` available, fully sourced) or installed to `/usr/local/bin/` (no `lib/`, falls back to inlined copies of every helper it needs). New helpers must be added to **both** sourcing paths. Idempotent guards everywhere — see CLAUDE.md §4.
+**Architecture:** Pure bash, sourced libraries + executable CLI. The CLI works in two modes: when invoked from the repo (`lib/*.sh` available, fully sourced) or installed to `/usr/local/bin/` (no `lib/`, falls back to inlined copies of every helper it needs). New helpers must be added to **both** sourcing paths. Idempotent guards everywhere — see AGENTS.md §4.
 
 **Tech Stack:** Bash 5 + coreutils, `mysql` / `mysqldump` (with `--defaults-extra-file` so passwords never reach `ps aux`), `gzip`/`gunzip`, `shellcheck`, no external runtimes.
 
 **Source spec:** `docs/superpowers/specs/2026-04-26-forge-lite-db-cli-design.md`
 
-**Testing policy for this plan:** No unit tests are written. The project has no test infrastructure today; a project-wide test setup is being planned separately (per `feedback_no_adhoc_tests.md`). Verification is `bash -n` + `shellcheck` + interactive `--help` smoke + negative-path manual checks per CLAUDE.md §12.
+**Testing policy for this plan:** No unit tests are written. The project has no test infrastructure today; a project-wide test setup is being planned separately (per `feedback_no_adhoc_tests.md`). Verification is `bash -n` + `shellcheck` + interactive `--help` smoke + negative-path manual checks per AGENTS.md §12.
 
 ---
 
@@ -34,7 +34,7 @@
 
 Read these once before starting Task 1; they prevent the most likely review comments.
 
-- **Quoting**: Always `"${VAR}"`, never `$VAR`. Always `[[ ]]`, never `[ ]`. (CLAUDE.md §3.6, §3.7)
+- **Quoting**: Always `"${VAR}"`, never `$VAR`. Always `[[ ]]`, never `[ ]`. (AGENTS.md §3.6, §3.7)
 - **Logging**: Every user-facing line goes through `log_info` / `log_ok` / `log_warn` / `log_error` / `die` — never bare `echo`, except for stdout-as-data (e.g. `dump` echoing the output path, `info` printing the formatted block, `resolve_*` echoing their return value).
 - **Stderr vs stdout**: `log_*` writes to stderr (set in `lib/common.sh:22-25`). Any function that "returns" a value via `echo` writes to stdout. Both paths must coexist cleanly inside command substitutions: `path=$(cmd_dump …)` should yield only the path.
 - **Identifier safety**: Use `sanitize_for_identifier "$domain"` from `lib/validation.sh:35`. It produces `example_com` from `example.com`. The site DB name, DB user, and credential key suffix all share this identifier (set by `sites/add-site.sh:69,194-206`).

@@ -117,7 +117,7 @@ Source `lib/sites.sh` and `lib/validation.sh` alongside `lib/common.sh` and `lib
 
 #### Argument parsing
 
-All new subcommands use `--flag=value` style per CLAUDE.md §3.9:
+All new subcommands use `--flag=value` style per AGENTS.md §3.9:
 
 ```bash
 while [[ $# -gt 0 ]]; do
@@ -426,7 +426,7 @@ Commands:
 
 - `create`, `drop`, `list`, `backup`, `restore` keep their current synopses, output formats, and exit codes.
 - Their **only** behavioural change: credential resolution becomes lazy, so `forge-lite-db --help` no longer requires `/root/.forge-lite-credentials`. Users with a valid credentials file see no UX difference.
-- `cmd_drop`'s positional `--yes` argument (a non-idiomatic wart vs. CLAUDE.md §3.9) is preserved unchanged. Cleanup deferred to a separate change.
+- `cmd_drop`'s positional `--yes` argument (a non-idiomatic wart vs. AGENTS.md §3.9) is preserved unchanged. Cleanup deferred to a separate change.
 - `/etc/forge-lite/<domain>.conf` format is unchanged. No new keys required.
 - The credentials file format is unchanged. `MARIADB_ROOT_PASSWORD` is the existing key.
 - `cli/forge-lite` already dispatches `db` via `exec forge-lite-db "$@"` (verified). No change.
