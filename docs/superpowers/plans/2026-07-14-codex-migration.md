@@ -88,10 +88,16 @@ Run:
 test -f AGENTS.md
 test ! -e CLAUDE.md
 test "$(wc -c < AGENTS.md)" -lt 32768
-! rg -n 'CLAUDE\.md|\.claude/' AGENTS.md server docs .agents .codex 2>/dev/null
+legacy_scan_status=0
+rg -n \
+    -g '!docs/superpowers/specs/2026-07-14-codex-migration-design.md' \
+    -g '!docs/superpowers/plans/2026-07-14-codex-migration.md' \
+    'CLAUDE\.md|\.claude/' AGENTS.md server docs \
+    || legacy_scan_status=$?
+test "${legacy_scan_status}" -eq 1
 ```
 
-Expected: all commands exit 0.
+Expected: the discovery and size checks exit 0, `rg` records status 1 for no live matches, and the final status assertion exits 0. An `rg` status of 0 (a match) or greater than 1 (an error) fails validation.
 
 ### Task 3: Migrate the backward compatibility specialist
 
