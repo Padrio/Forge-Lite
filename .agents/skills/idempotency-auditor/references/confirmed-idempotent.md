@@ -4,11 +4,20 @@ Read this reference before flagging any construct listed below. Confirm that cur
 
 ## `render_template`
 
-`render_template` in `lib/templates.sh` writes atomically using a sibling `mktemp "${output}.XXXXXX"`, followed by `mv -f`, and applies mode `644`. Identical inputs produce byte-identical content. Do not flag the render itself merely because it overwrites its destination.
+`render_template` in `lib/templates.sh` writes atomically using a sibling
+`mktemp "${output}.XXXXXX"`. It explicitly checks template reads,
+substitutions, temporary writes, and permission changes; applies mode `644` to
+the complete candidate; and only then activates it with `mv -f`. Identical
+inputs produce byte-identical content. Do not flag the render itself merely
+because it overwrites its destination.
 
 It warns but does not fail on unreplaced `{{KEY}}` placeholders. Verify that every call supplies all placeholders used by its template. At the time this fact was verified, `vhost-ssl.conf` used exactly `DOMAIN`, `SERVER_NAMES`, and `FPM_SOCKET`.
 
-If killed between `mktemp` and `mv`, it can leave a harmless `${output}.XXXXXX` sibling. That file does not match Supervisor's `*.conf` glob and is not selected by NGINX `sites-enabled` symlinks. Distinguish this minor residue from a partial live-file write.
+If killed between `mktemp` and `mv`, it can leave a harmless
+`${output}.XXXXXX` sibling. That file does not match Supervisor's `*.conf`
+glob and is not selected by NGINX `sites-enabled` symlinks. The live file is
+never activated with `mktemp`'s `0600` mode. Distinguish this minor residue
+from a partial live-file write.
 
 ## Supervisor apply sequence
 

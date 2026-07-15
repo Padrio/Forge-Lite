@@ -14,15 +14,24 @@ render_template() {
     [[ -f "$template" ]] || { log_error "Template not found: ${template}"; return 1; }
 
     local content
-    content=$(cat "$template")
+    if ! content="$(cat "$template")"; then
+        log_error "Could not read template: ${template}"
+        return 1
+    fi
 
     local pair key value
     for pair in "$@"; do
         key="${pair%%=*}"
         value="${pair#*=}"
         # Escape sed special characters in the value (including pipe delimiter)
-        value=$(printf '%s' "$value" | sed -e 's/[&/\|]/\\&/g')
-        content=$(printf '%s' "$content" | sed "s|{{${key}}}|${value}|g")
+        if ! value="$(printf '%s' "$value" | sed -e 's/[&/\|]/\\&/g')"; then
+            log_error "Could not escape template value for ${key}"
+            return 1
+        fi
+        if ! content="$(printf '%s' "$content" | sed "s|{{${key}}}|${value}|g")"; then
+            log_error "Could not render template key ${key}"
+            return 1
+        fi
     done
 
     # Warn about unreplaced placeholders
@@ -34,11 +43,26 @@ render_template() {
 
     # Atomic write: temp file + mv
     local tmp_output
-    tmp_output=$(mktemp "${output}.XXXXXX")
-    printf '%s\n' "$content" > "$tmp_output"
-    mv -f "$tmp_output" "$output"
+    if ! tmp_output="$(mktemp "${output}.XXXXXX")"; then
+        log_error "Could not create temporary template output for ${output}"
+        return 1
+    fi
+    if ! printf '%s\n' "$content" > "$tmp_output"; then
+        rm -f "$tmp_output"
+        log_error "Could not write temporary template output for ${output}"
+        return 1
+    fi
 
-    # mktemp creates files with 0600 — set sensible default for config files.
-    # Callers that need different permissions (e.g. redis.sh) set them explicitly after.
-    chmod 644 "$output"
+    # Set the final mode before activation. Callers that need a different mode
+    # (for example redis.sh) override it after rendering.
+    if ! chmod 644 "$tmp_output"; then
+        rm -f "$tmp_output"
+        log_error "Could not set template output mode for ${output}"
+        return 1
+    fi
+    if ! mv -f "$tmp_output" "$output"; then
+        rm -f "$tmp_output"
+        log_error "Could not activate rendered template: ${output}"
+        return 1
+    fi
 }

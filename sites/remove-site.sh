@@ -3,11 +3,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FORGE_LITE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export FORGE_LITE_DIR
 
 source "${FORGE_LITE_DIR}/lib/common.sh"
 source "${FORGE_LITE_DIR}/lib/credentials.sh"
 source "${FORGE_LITE_DIR}/lib/validation.sh"
+source "${FORGE_LITE_DIR}/lib/scheduler.sh"
 
 require_root
 
@@ -45,6 +47,11 @@ done
 
 [[ -n "$DOMAIN" ]] || die "Domain is required."
 
+validate_domain "${DOMAIN}"
+REQUESTED_DOMAIN="${DOMAIN}"
+SITE_ID=$(sanitize_for_identifier "${DOMAIN}")
+acquire_site_lock "${DOMAIN}"
+
 SITE_CONFIG="/etc/forge-lite/${DOMAIN}.conf"
 [[ -f "$SITE_CONFIG" ]] || die "Site config not found: ${SITE_CONFIG}"
 
@@ -52,7 +59,8 @@ SITE_CONFIG="/etc/forge-lite/${DOMAIN}.conf"
 # shellcheck disable=SC1090
 source "$SITE_CONFIG"
 
-SITE_ID=$(sanitize_for_identifier "$DOMAIN")
+[[ "${DOMAIN}" == "${REQUESTED_DOMAIN}" ]] || \
+    die "DOMAIN in ${SITE_CONFIG} does not match ${REQUESTED_DOMAIN}"
 
 # ---------------------------------------------------------------------------
 # Confirmation
@@ -75,7 +83,7 @@ log_info "=========================================="
 # 1. Remove supervisor configs
 # ---------------------------------------------------------------------------
 log_info "Removing supervisor configs..."
-for conf in /etc/supervisor/conf.d/${DOMAIN}-*.conf; do
+for conf in /etc/supervisor/conf.d/"${DOMAIN}"-*.conf; do
     if [[ -f "$conf" ]]; then
         local_name=$(basename "$conf" .conf)
         supervisorctl stop "${local_name}:*" 2>/dev/null || true
@@ -89,10 +97,8 @@ supervisorctl update 2>/dev/null || true
 # ---------------------------------------------------------------------------
 # 2. Remove cron
 # ---------------------------------------------------------------------------
-if [[ -f "/etc/cron.d/${DOMAIN}-scheduler" ]]; then
-    rm -f "/etc/cron.d/${DOMAIN}-scheduler"
-    log_info "Removed scheduler cron"
-fi
+remove_scheduler_cron "${DOMAIN}"
+log_info "Removed scheduler cron"
 
 # ---------------------------------------------------------------------------
 # 3. Remove NGINX vhost

@@ -292,8 +292,35 @@ sudo forge-lite-env audit --fix                # Fix any drift (deployer:deploye
 
 ### forge-lite update
 ```bash
-sudo forge-lite update   # Reinstall CLI tools and bash completions
+# First update from a pre-migration checkout: invoke the newly pulled CLI.
+sudo git -C /opt/forge-lite pull --ff-only
+sudo /opt/forge-lite/cli/forge-lite update
+
+# Later same-version updates can use the installed command.
+sudo forge-lite update
 ```
+
+Catch-up migrations also repair managed server state from older forge-lite
+versions. In particular, Laravel scheduler files are migrated from the legacy
+`/etc/cron.d/<domain>-scheduler` name to a cron-compatible filename built from
+the normalized site identifier plus a collision-resistant domain digest. The
+running copy of an older `/usr/local/bin/forge-lite` cannot execute migration
+code that it has only just installed, which is why the first upgrade must use
+the repository path shown above.
+
+The catch-up refuses to create a managed scheduler when the same site still has
+an active scheduler in deployer's personal crontab. To avoid duplicate Laravel
+runs, back up that crontab and remove the matching manual `deployer` crontab
+entry before running the catch-up. Unrelated crontab lines must remain
+unchanged.
+
+Do not roll forge-lite back to a revision that lacks `lib/scheduler.sh` after
+the migration. Older removal and failure-cleanup scripts do not know the new
+filename. An emergency rollback across this compatibility floor requires an
+explicit handoff: while the current revision is still active, remove its
+managed scheduler cron and verify that no digest-named managed cron remains.
+Only then add a temporary manual scheduler and roll back. Older forge-lite
+versions will not manage or remove that manual fallback.
 
 ### forge-lite runner
 ```bash

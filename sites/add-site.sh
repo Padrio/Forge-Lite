@@ -10,6 +10,7 @@ source "${FORGE_LITE_DIR}/lib/common.sh"
 source "${FORGE_LITE_DIR}/lib/credentials.sh"
 source "${FORGE_LITE_DIR}/lib/templates.sh"
 source "${FORGE_LITE_DIR}/lib/validation.sh"
+source "${FORGE_LITE_DIR}/lib/scheduler.sh"
 
 require_root
 
@@ -83,6 +84,9 @@ FPM_SOCKET="/var/run/php/php${PHP_VERSION}-${DOMAIN}-fpm.sock"
 TEMPLATE_DIR="${FORGE_LITE_DIR}/server/config/templates"
 SITE_CONFIG="/etc/forge-lite/${DOMAIN}.conf"
 
+# Serialize the complete lifecycle with remove-site and catch-up migrations.
+acquire_site_lock "${DOMAIN}"
+
 # Build server_name value (primary domain + aliases)
 SERVER_NAMES="$DOMAIN"
 ALIASES_CSV=""
@@ -112,7 +116,7 @@ cleanup_add_site() {
         rm -f "/etc/nginx/sites-available/${DOMAIN}.conf" 2>/dev/null || true
         rm -f "/etc/nginx/sites-extra/${DOMAIN}.conf" 2>/dev/null || true
         rm -f /etc/supervisor/conf.d/"${DOMAIN}"-*.conf 2>/dev/null || true
-        rm -f "/etc/cron.d/${DOMAIN}-scheduler" 2>/dev/null || true
+        remove_scheduler_cron "${DOMAIN}" 2>/dev/null || true
         rm -f "/etc/forge-lite/auth/${DOMAIN}.conf" 2>/dev/null || true
         rm -f "/etc/forge-lite/auth/${DOMAIN}.htpasswd" 2>/dev/null || true
         rm -f "$SITE_CONFIG" 2>/dev/null || true
@@ -270,10 +274,8 @@ fi
 # ---------------------------------------------------------------------------
 if [[ "$ENABLE_SCHEDULER" == true ]]; then
     log_info "Creating scheduler cron..."
-    render_template "${TEMPLATE_DIR}/cron/laravel-scheduler" \
-        "/etc/cron.d/${DOMAIN}-scheduler" \
-        "DOMAIN=${DOMAIN}"
-    chmod 644 "/etc/cron.d/${DOMAIN}-scheduler"
+    ensure_scheduler_cron \
+        "${DOMAIN}" "${TEMPLATE_DIR}/cron/laravel-scheduler"
     log_ok "Scheduler cron created"
 fi
 

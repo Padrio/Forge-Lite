@@ -106,6 +106,15 @@ else
     }
 fi
 
+if [[ -f "${FORGE_LITE_DIR}/lib/templates.sh" && -f "${FORGE_LITE_DIR}/lib/scheduler.sh" ]]; then
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
+    source "${FORGE_LITE_DIR}/lib/templates.sh"
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
+    source "${FORGE_LITE_DIR}/lib/scheduler.sh"
+fi
+
 SITE_CONFIG_DIR="${SITE_CONFIG_DIR:-/etc/forge-lite}"
 NGINX_SITES_AVAILABLE="${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}"
 FORGE_LITE_SSL_BIN="${FORGE_LITE_SSL_BIN:-forge-lite-ssl}"
@@ -475,6 +484,10 @@ cmd_deploy_setup() {
 # runner commands
 # ---------------------------------------------------------------------------
 cmd_runner() {
+    # die is loaded from common.sh or its local fallback above. Following the
+    # runtime-sourced scheduler library can otherwise make ShellCheck report a
+    # false forward-definition error here.
+    # shellcheck disable=SC2218
     [[ $# -ge 1 ]] || die "Usage: forge-lite runner <setup|remove|status|list> [args]"
     local sub="$1"; shift
 
@@ -516,6 +529,17 @@ USAGE
 # ---------------------------------------------------------------------------
 # update command
 # ---------------------------------------------------------------------------
+_run_catch_up_migrations() {
+    local scheduler_template="${FORGE_LITE_DIR}/server/config/templates/cron/laravel-scheduler"
+    local cron_dir="${FORGE_LITE_CRON_DIR:-/etc/cron.d}"
+
+    declare -F migrate_scheduler_crons >/dev/null ||
+        die "Scheduler migration helpers not found in ${FORGE_LITE_DIR}/lib"
+
+    log_info "Applying catch-up migrations..."
+    migrate_scheduler_crons "${SITE_CONFIG_DIR}" "${scheduler_template}" "${cron_dir}"
+}
+
 cmd_update() {
     local cli_dir="${FORGE_LITE_DIR}/cli"
     local tools=(php-switch forge-lite-db forge-lite-ssl forge-lite-env forge-lite-auth forge-lite-reverb forge-lite)
@@ -533,6 +557,8 @@ cmd_update() {
     else
         log_warn "Skipped bash completion (/etc/bash_completion.d not found)"
     fi
+
+    _run_catch_up_migrations
 
     log_ok "forge-lite update complete — ${#tools[@]} tools reinstalled."
 }
