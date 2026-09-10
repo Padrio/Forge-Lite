@@ -304,6 +304,10 @@ Catch-up migrations also repair managed server state from older forge-lite
 versions. The managed `/etc/logrotate.d/forge-lite` is re-synced with the
 current template (previous file kept as `.pre-migration`); older templates
 rotated `laravel-*.log` and duplicated the nginx package's own logrotate entry.
+Existing SSL vhosts lose their `ssl_stapling`/`ssl_trusted_certificate` lines
+(backup `.pre-migration`, nginx is reloaded only after `nginx -t` passes) —
+Let's Encrypt stopped serving OCSP responders in 2025, the directives only
+produced warnings.
 In particular, Laravel scheduler files are migrated from the legacy
 `/etc/cron.d/<domain>-scheduler` name to a cron-compatible filename built from
 the normalized site identifier plus a collision-resistant domain digest. The
@@ -375,7 +379,7 @@ sudo forge-lite site remove example.com --keep-db --keep-files
 | **System** | deployer user, UTC timezone, en_US.UTF-8 locale, open file limits, journald capped (200M) |
 | **Swap** | Size based on RAM, sysctl tuning (`vm.swappiness=10`), OOM priorities |
 | **Security** | SSH hardening (key-only, `PermitRootLogin prohibit-password`, MaxAuthTries=3), UFW (22/80/443), Fail2Ban, unattended-upgrades |
-| **NGINX** | Mainline, DH params, gzip, rate limiting, security headers (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — re-asserted on static assets), OCSP stapling, CSP opt-in (Report-Only template) |
+| **NGINX** | Mainline, DH params, gzip, rate limiting, security headers (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — re-asserted on static assets), CSP opt-in (Report-Only template) |
 | **PHP** | 8.2, 8.3, 8.4 with FPM + Laravel extensions + OPcache/JIT (8.1 is EOL, opt-in via `provision --php-versions=`). Only the **default** version's FPM is started; other versions install stopped+disabled and are enabled on demand when a site uses them. |
 | **Composer** | Global install with weekly auto-update |
 | **MariaDB** | Secured, InnoDB tuned (buffer pool 20% RAM capped 1024M, full durability `flush_log=1`; override via `--db-buffer-pool=` / `--db-flush-log=`), forge-lite admin user |

@@ -121,6 +121,12 @@ if [[ -f "${FORGE_LITE_DIR}/lib/logrotate.sh" ]]; then
     source "${FORGE_LITE_DIR}/lib/logrotate.sh"
 fi
 
+if [[ -f "${FORGE_LITE_DIR}/lib/nginx.sh" ]]; then
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
+    source "${FORGE_LITE_DIR}/lib/nginx.sh"
+fi
+
 SITE_CONFIG_DIR="${SITE_CONFIG_DIR:-/etc/forge-lite}"
 NGINX_SITES_AVAILABLE="${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}"
 FORGE_LITE_SSL_BIN="${FORGE_LITE_SSL_BIN:-forge-lite-ssl}"
@@ -550,6 +556,12 @@ _run_catch_up_migrations() {
     # logrotate.service fail every night.
     if declare -F ensure_logrotate_config >/dev/null; then
         ensure_logrotate_config "${FORGE_LITE_DIR}/server/config/templates/logrotate/forge-lite"
+    fi
+
+    # Let's Encrypt stopped serving OCSP responders in 2025; ssl_stapling in
+    # older vhosts only produces `nginx -t` warnings.
+    if declare -F migrate_vhost_ocsp_stapling >/dev/null; then
+        migrate_vhost_ocsp_stapling "${NGINX_SITES_AVAILABLE}"
     fi
 }
 
