@@ -82,15 +82,18 @@ _site_config_set() {
 }
 
 # Emit the marked nginx reverb proxy block to stdout. Quoted heredoc keeps the
-# nginx $variables literal. Regex location covers /app{,/...} and /apps{,/...}
-# only — not /appointments, /applications, etc.
+# nginx $variables literal. The regex is scoped to the Pusher protocol: client
+# websocket /app/{key} (key = alphanumeric app key, query string is not part of
+# the location match) and server API /apps/{id}/... . Everything else under
+# /app* — bot probes such as /app/settings.py, or app routes like /applications
+# and /appointments — stays with Laravel instead of hitting the Reverb daemon.
 _reverb_proxy_block() {
     cat <<'BLOCK'
 # BEGIN forge-lite reverb
-# Laravel Reverb websocket proxy (managed by `forge-lite reverb`). Proxies the
-# Pusher-protocol endpoints to the local Reverb daemon: client WS /app/{key} and
-# server API /apps/{id}/... . nginx terminates TLS; upstream is plain ws.
-location ~ ^/apps?(/|$) {
+# Laravel Reverb websocket proxy (managed by `forge-lite reverb`). Proxies only
+# the Pusher-protocol endpoints to the local Reverb daemon: client WS /app/{key}
+# and server API /apps/{id}/... . nginx terminates TLS; upstream is plain ws.
+location ~ ^/(app/[A-Za-z0-9_-]+$|apps/[A-Za-z0-9_-]+/) {
     proxy_pass http://127.0.0.1:8080;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -165,7 +168,7 @@ cmd_enable() {
         if nginx -t 2>/dev/null; then
             systemctl reload nginx
             rm -f "$backup"
-            log_ok "nginx websocket proxy active (/app, /apps -> 127.0.0.1:8080)"
+            log_ok "nginx websocket proxy active (/app/{key}, /apps/{id}/* -> 127.0.0.1:8080)"
         else
             mv -f "$backup" "$extra"
             die "NGINX config test failed adding reverb proxy for ${domain}; reverted sites-extra."
