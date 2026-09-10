@@ -301,7 +301,10 @@ sudo forge-lite update
 ```
 
 Catch-up migrations also repair managed server state from older forge-lite
-versions. In particular, Laravel scheduler files are migrated from the legacy
+versions. The managed `/etc/logrotate.d/forge-lite` is re-synced with the
+current template (previous file kept as `.pre-migration`); older templates
+rotated `laravel-*.log` and duplicated the nginx package's own logrotate entry.
+In particular, Laravel scheduler files are migrated from the legacy
 `/etc/cron.d/<domain>-scheduler` name to a cron-compatible filename built from
 the normalized site identifier plus a collision-resistant domain digest. The
 running copy of an older `/usr/local/bin/forge-lite` cannot execute migration

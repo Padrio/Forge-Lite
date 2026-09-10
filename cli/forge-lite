@@ -115,6 +115,12 @@ if [[ -f "${FORGE_LITE_DIR}/lib/templates.sh" && -f "${FORGE_LITE_DIR}/lib/sched
     source "${FORGE_LITE_DIR}/lib/scheduler.sh"
 fi
 
+if [[ -f "${FORGE_LITE_DIR}/lib/logrotate.sh" ]]; then
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
+    source "${FORGE_LITE_DIR}/lib/logrotate.sh"
+fi
+
 SITE_CONFIG_DIR="${SITE_CONFIG_DIR:-/etc/forge-lite}"
 NGINX_SITES_AVAILABLE="${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}"
 FORGE_LITE_SSL_BIN="${FORGE_LITE_SSL_BIN:-forge-lite-ssl}"
@@ -538,6 +544,13 @@ _run_catch_up_migrations() {
 
     log_info "Applying catch-up migrations..."
     migrate_scheduler_crons "${SITE_CONFIG_DIR}" "${scheduler_template}" "${cron_dir}"
+
+    # Older templates rotated laravel-*.log (leaving .log.1 orphans) and
+    # duplicated the nginx package's own logrotate entry, which made
+    # logrotate.service fail every night.
+    if declare -F ensure_logrotate_config >/dev/null; then
+        ensure_logrotate_config "${FORGE_LITE_DIR}/server/config/templates/logrotate/forge-lite"
+    fi
 }
 
 cmd_update() {

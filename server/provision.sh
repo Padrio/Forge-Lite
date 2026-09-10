@@ -12,6 +12,7 @@ source "${FORGE_LITE_DIR}/lib/common.sh"
 source "${FORGE_LITE_DIR}/lib/credentials.sh"
 source "${FORGE_LITE_DIR}/lib/templates.sh"
 source "${FORGE_LITE_DIR}/lib/validation.sh"
+source "${FORGE_LITE_DIR}/lib/logrotate.sh"
 
 # Source all modules (defines provision_* functions without executing them)
 for module in "${FORGE_LITE_DIR}/server/modules/"*.sh; do
@@ -131,8 +132,8 @@ if [[ -d /etc/bash_completion.d ]]; then
         /etc/bash_completion.d/forge-lite
 fi
 
-# Deploy logrotate config
-cp "${FORGE_LITE_DIR}/server/config/templates/logrotate/forge-lite" /etc/logrotate.d/forge-lite
+# Deploy logrotate config (same helper as the `forge-lite update` catch-up)
+ensure_logrotate_config "${FORGE_LITE_DIR}/server/config/templates/logrotate/forge-lite"
 
 # Create site config and auth directories
 mkdir -p /etc/forge-lite
