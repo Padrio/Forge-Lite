@@ -6,14 +6,19 @@ set -euo pipefail
 # ensure_logrotate_config <template> [target]
 #   Installs the forge-lite logrotate template when the target is missing or
 #   differs. Idempotent: an identical target is left untouched and nothing is
-#   logged. A differing target is backed up to <target>.pre-migration first.
+#   logged. A differing target is backed up first — OUTSIDE /etc/logrotate.d,
+#   because logrotate parses every file in that directory and a stale copy
+#   would re-introduce the duplicate-entry failure the migration removes.
+#   Backup path: <backup_dir>/<target basename>.pre-migration
+#   (backup_dir = FORGE_LITE_BACKUP_DIR, default /var/backups/forge-lite).
 #   When logrotate is available the installed file is syntax-checked; on
 #   failure the previous file is restored and the function returns 1.
 # ---------------------------------------------------------------------------
 ensure_logrotate_config() {
     local template="$1"
     local target="${2:-${FORGE_LITE_LOGROTATE_TARGET:-/etc/logrotate.d/forge-lite}}"
-    local backup="${target}.pre-migration"
+    local backup_dir="${FORGE_LITE_BACKUP_DIR:-/var/backups/forge-lite}"
+    local backup="${backup_dir}/${target##*/}.pre-migration"
     local had_target=false
 
     [[ -f "${template}" ]] || {
@@ -27,6 +32,8 @@ ensure_logrotate_config() {
 
     if [[ -f "${target}" ]]; then
         had_target=true
+        mkdir -p "${backup_dir}" || return 1
+        chmod 700 "${backup_dir}" 2>/dev/null || true
         cp -a "${target}" "${backup}" || return 1
     fi
 

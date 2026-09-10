@@ -302,7 +302,8 @@ sudo forge-lite update
 
 Catch-up migrations also repair managed server state from older forge-lite
 versions. The managed `/etc/logrotate.d/forge-lite` is re-synced with the
-current template (previous file kept as `.pre-migration`); older templates
+current template (previous file kept as
+`/var/backups/forge-lite/forge-lite.pre-migration`); older templates
 rotated `laravel-*.log` and duplicated the nginx package's own logrotate entry.
 Existing SSL vhosts lose their `ssl_stapling`/`ssl_trusted_certificate` lines
 (backup `.pre-migration`, nginx is reloaded only after `nginx -t` passes) —

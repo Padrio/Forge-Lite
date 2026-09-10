@@ -19,6 +19,8 @@ source "${PROJECT_ROOT}/lib/common.sh"
 # shellcheck disable=SC1091
 source "${PROJECT_ROOT}/lib/logrotate.sh"
 
+export FORGE_LITE_BACKUP_DIR="${TEST_TMP}/backups"
+
 fail() {
     printf '    %s\n' "$*" >&2
     return 1
@@ -82,7 +84,8 @@ test_ensure_installs_missing_target_once() {
 
     ensure_logrotate_config "${TEMPLATE}" "${target}" 2>/dev/null || return 1
     cmp -s "${TEMPLATE}" "${target}" || { fail "Target differs from template"; return 1; }
-    [[ ! -e "${target}.pre-migration" ]] || { fail "Fresh install must not create a backup"; return 1; }
+    [[ ! -e "${FORGE_LITE_BACKUP_DIR}/forge-lite.pre-migration" ]] ||
+        { fail "Fresh install must not create a backup"; return 1; }
 
     local before after
     before="$(stat -f '%m' "${target}" 2>/dev/null || stat -c '%Y' "${target}")"
@@ -106,9 +109,24 @@ LEGACY
 
     ensure_logrotate_config "${TEMPLATE}" "${target}" 2>/dev/null || return 1
     cmp -s "${TEMPLATE}" "${target}" || { fail "Legacy target was not replaced"; return 1; }
-    [[ -f "${target}.pre-migration" ]] || { fail "Backup of legacy target missing"; return 1; }
-    grep -q '/var/log/nginx' "${target}.pre-migration" ||
+    local backup="${FORGE_LITE_BACKUP_DIR}/forge-lite.pre-migration"
+    [[ -f "${backup}" ]] || { fail "Backup of legacy target missing"; return 1; }
+    grep -q '/var/log/nginx' "${backup}" ||
         { fail "Backup does not hold the legacy content"; return 1; }
+}
+
+test_ensure_never_leaves_a_backup_inside_the_logrotate_dir() {
+    # logrotate parses every file in /etc/logrotate.d — a stale copy there
+    # would duplicate the log entries and fail the whole run again.
+    local dir="${TEST_TMP}/no-sibling" target
+    mkdir -p "${dir}"
+    target="${dir}/forge-lite"
+    printf '/tmp/legacy.log {\n    daily\n}\n' > "${target}"
+
+    ensure_logrotate_config "${TEMPLATE}" "${target}" 2>/dev/null || return 1
+    local leftovers
+    leftovers="$(find "${dir}" -type f ! -name forge-lite | wc -l | tr -d ' ')"
+    [[ "${leftovers}" == "0" ]] || { fail "Backup was written next to the target: $(ls "${dir}")"; return 1; }
 }
 
 test_ensure_fails_on_missing_template() {
@@ -139,6 +157,7 @@ run_test "template leaves nginx logs to the nginx package" test_template_leaves_
 run_test "template passes logrotate syntax check" test_template_passes_logrotate_syntax_check
 run_test "ensure installs a missing target exactly once" test_ensure_installs_missing_target_once
 run_test "ensure replaces a legacy target and keeps a backup" test_ensure_replaces_legacy_target_and_keeps_backup
+run_test "ensure never leaves a backup inside the logrotate dir" test_ensure_never_leaves_a_backup_inside_the_logrotate_dir
 run_test "ensure fails on a missing template" test_ensure_fails_on_missing_template
 run_test "provision and update share the helper" test_provision_and_update_share_the_helper
 
