@@ -5,11 +5,14 @@
 # nginx logs are fully covered by /etc/logrotate.d/nginx (/var/log/nginx/*.log,
 # shipped by the nginx package); a second entry here is a duplicate that makes
 # logrotate fail for the whole nginx config.
+# Laravel's storage/logs is group-writable (deployer:deployer, 0775). logrotate
+# refuses such parents unless told to rotate as that user/group — hence `su`.
 /home/deployer/sites/*/shared/storage/logs/worker.log
 /home/deployer/sites/*/shared/storage/logs/reverb.log
 /home/deployer/sites/*/shared/storage/logs/horizon.log
 /home/deployer/sites/*/shared/storage/logs/ssr.log
 /home/deployer/sites/*/shared/storage/logs/scheduler.log {
+    su deployer deployer
     daily
     missingok
     rotate 14

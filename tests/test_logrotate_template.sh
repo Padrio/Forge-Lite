@@ -55,6 +55,13 @@ test_template_covers_every_supervisor_and_scheduler_log() {
     done
 }
 
+test_template_rotates_as_deployer() {
+    # storage/logs is deployer:deployer 0775; without `su` logrotate skips every
+    # file with "parent directory has insecure permissions".
+    grep -qE '^[[:space:]]+su deployer deployer$' "${TEMPLATE}" ||
+        { fail "Template must rotate as deployer (su deployer deployer)"; return 1; }
+}
+
 test_template_leaves_nginx_logs_to_nginx_package() {
     # Comments may explain the nginx package's own entry; only directives count.
     if grep -v '^[[:space:]]*#' "${TEMPLATE}" | grep -q '/var/log/nginx'; then
@@ -127,6 +134,7 @@ test_provision_and_update_share_the_helper() {
 
 run_test "template does not rotate laravel daily logs" test_template_does_not_rotate_laravel_daily_logs
 run_test "template covers every supervisor and scheduler log" test_template_covers_every_supervisor_and_scheduler_log
+run_test "template rotates as deployer" test_template_rotates_as_deployer
 run_test "template leaves nginx logs to the nginx package" test_template_leaves_nginx_logs_to_nginx_package
 run_test "template passes logrotate syntax check" test_template_passes_logrotate_syntax_check
 run_test "ensure installs a missing target exactly once" test_ensure_installs_missing_target_once
