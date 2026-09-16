@@ -99,6 +99,9 @@ F2B
         ensure_service fail2ban restart
         log_ok "Fail2Ban configured (sshd + nginx jails)"
     fi
+    # Always synchronize the managed scanner jail. Unlike the generic Debian
+    # nginx-botsearch filter it consumes forge-lite's dedicated minimal log.
+    ensure_fail2ban_scanner_config
 
     # --- Unattended Upgrades ---
     ensure_packages unattended-upgrades apt-listchanges

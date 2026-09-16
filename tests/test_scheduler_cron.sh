@@ -668,6 +668,9 @@ test_update_runs_scheduler_catch_up_migration() {
         FORGE_LITE_CRON_DIR="${FORGE_LITE_CRON_DIR}" \
         FORGE_LITE_LOCK_DIR="${FORGE_LITE_LOCK_DIR}" \
         FORGE_LITE_CRONTAB_SPOOL_DIR="${FORGE_LITE_CRONTAB_SPOOL_DIR}" \
+        FORGE_LITE_FAIL2BAN_FILTER_TARGET="${TEST_TMP}/fail2ban/filter.d/nginx-scanner.conf" \
+        FORGE_LITE_FAIL2BAN_JAIL_TARGET="${TEST_TMP}/fail2ban/jail.d/99-forge-lite.local" \
+        FORGE_LITE_SECURITY_LOG="${TEST_TMP}/logs/forge-lite-security.log" \
         bash -c 'source "$1"; cmd_update' _ "${PROJECT_ROOT}/cli/forge-lite"; then
         export -n -f install
         unset -f install

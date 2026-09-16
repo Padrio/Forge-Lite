@@ -141,6 +141,10 @@ log_info "Creating directory structure..."
 mkdir -p "${SITE_DIR}"/{releases,shared/storage/{app/public,framework/{cache/data,sessions,testing,views},logs}}
 touch "${SITE_DIR}/shared/.env"
 chown -R deployer:deployer "$SITE_DIR"
+# Laravel must be able to create cache/session/view files, but other local
+# users must never be able to modify them. The explicit mode also neutralizes
+# an unusually permissive process umask on older hosts.
+find "${SITE_DIR}/shared/storage" -type d -exec chmod 775 {} +
 
 log_ok "Directory structure created"
 

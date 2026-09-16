@@ -127,6 +127,12 @@ if [[ -f "${FORGE_LITE_DIR}/lib/nginx.sh" ]]; then
     source "${FORGE_LITE_DIR}/lib/nginx.sh"
 fi
 
+if [[ -f "${FORGE_LITE_DIR}/lib/security.sh" ]]; then
+    # Runtime path supports repo and installed layouts.
+    # shellcheck disable=SC1091
+    source "${FORGE_LITE_DIR}/lib/security.sh"
+fi
+
 SITE_CONFIG_DIR="${SITE_CONFIG_DIR:-/etc/forge-lite}"
 NGINX_SITES_AVAILABLE="${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}"
 FORGE_LITE_SSL_BIN="${FORGE_LITE_SSL_BIN:-forge-lite-ssl}"
@@ -562,6 +568,19 @@ _run_catch_up_migrations() {
     # older vhosts only produces `nginx -t` warnings.
     if declare -F migrate_vhost_ocsp_stapling >/dev/null; then
         migrate_vhost_ocsp_stapling "${NGINX_SITES_AVAILABLE}"
+    fi
+
+    # Keep privacy-minimized access logs while restoring actionable scanner
+    # bans through a dedicated minimal log. Existing managed PHP vhosts are
+    # migrated surgically and validated before NGINX reloads.
+    if declare -F migrate_nginx_scanner_handling >/dev/null; then
+        migrate_nginx_scanner_handling "${NGINX_SITES_AVAILABLE}" /etc/nginx/nginx.conf
+    fi
+    if declare -F ensure_fail2ban_scanner_config >/dev/null; then
+        ensure_fail2ban_scanner_config
+    fi
+    if declare -F repair_storage_permissions >/dev/null; then
+        repair_storage_permissions
     fi
 }
 

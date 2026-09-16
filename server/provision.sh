@@ -13,6 +13,7 @@ source "${FORGE_LITE_DIR}/lib/credentials.sh"
 source "${FORGE_LITE_DIR}/lib/templates.sh"
 source "${FORGE_LITE_DIR}/lib/validation.sh"
 source "${FORGE_LITE_DIR}/lib/logrotate.sh"
+source "${FORGE_LITE_DIR}/lib/security.sh"
 
 # Source all modules (defines provision_* functions without executing them)
 for module in "${FORGE_LITE_DIR}/server/modules/"*.sh; do

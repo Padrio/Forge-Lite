@@ -1,0 +1,25 @@
+[nginx-botsearch]
+# The regular forge-lite access log is privacy-minimized and intentionally has
+# neither client IP nor URI, so the distribution filter cannot match it.
+enabled = false
+
+[nginx-http-auth]
+enabled = true
+port = http,https
+filter = nginx-http-auth
+logpath = /var/log/nginx/*error.log
+backend = auto
+
+[nginx-scanner]
+enabled = true
+port = http,https
+filter = nginx-scanner
+logpath = /var/log/nginx/forge-lite-security.log
+backend = auto
+maxretry = 5
+findtime = 10m
+bantime = 1h
+bantime.increment = true
+bantime.factor = 2
+bantime.rndtime = 5m
+bantime.maxtime = 1w
