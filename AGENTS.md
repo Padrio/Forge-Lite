@@ -21,7 +21,7 @@
 2. **Fail fast** — `set -euo pipefail` in every script, no exceptions. Undefined variables are bugs, not features.
 3. **Separation of concerns** — Libraries (`lib/`) provide primitives. Modules (`server/modules/`) provide provisioning. CLI (`cli/`) provides UX. Never mix layers.
 4. **No external dependencies** — Pure bash + coreutils + standard packages. No Python helpers, no Ruby gems, no custom binaries. The template engine uses `sed`, not `envsubst`.
-5. **Single user model** — All sites run as `deployer`. No per-site users. FPM pools run as `deployer`, sockets owned by `www-data`.
+5. **Single user model** — All sites run as `deployer`. No per-site users. FPM pools run as `deployer`, sockets owned by `www-data`. `deployer` is unprivileged: no sudo rules, no `sudo`/`admin` group. Privileged steps run as root and drop to `deployer` via `sudo -u deployer`, never the other way round.
 6. **Credentials are sacred** — `/root/.forge-lite-credentials` (chmod 600). Never overwrite existing keys. Append-only pattern.
 7. **Atomic deployments** — `ln -sfn` for symlink swap. The `-n` flag is critical — without it, symlinks nest instead of replacing.
 
@@ -419,6 +419,7 @@ DEPLOY_BRANCH=main
 These are enforced during provisioning and MUST NOT be weakened:
 
 - **SSH**: Key-only auth, `PasswordAuthentication no`, `MaxAuthTries 3`, root login preserved for administration, deployer gets root's authorized_keys
+- **Privileges**: `deployer` runs all application code (FPM, workers, Reverb, Horizon, scheduler) and therefore has **no sudo rights**. `/etc/sudoers.d/deployer` is a comment-only placeholder written by `revoke_deployer_sudo` (`lib/security.sh`, used by `provision_system` and the `forge-lite update` catch-up); it also stops older checkouts from re-creating the former `NOPASSWD:ALL` rule. Administer as root, not via a `deployer` login. The only other sudoers rule is `github-runner`'s (`deploy.sh`/`rollback.sh` as root) — leave it unchanged. Any sudoers change must be staged under a dotted name, checked with `visudo -c -f`, moved into place atomically and re-checked with `visudo -c`.
 - **Firewall**: UFW enabled, only 22/80/443 open
 - **Fail2Ban**: sshd + nginx-http-auth jails active
 - **Updates**: `unattended-upgrades` for security patches
@@ -449,9 +450,9 @@ These are enforced during provisioning and MUST NOT be weakened:
 
 ### Reusable Workflow Pattern (`deploy.yml`)
 
-Uses `workflow_call` for both staging and production. Inputs: `environment`, `domain`, `branch`. Secrets: `SSH_PRIVATE_KEY`, `SSH_HOST`, `SSH_USER`.
+Uses `workflow_call` for both staging and production and runs on a **self-hosted runner on the target server** (`runner-labels`, default `self-hosted,forge-lite`). Inputs: `environment`, `domain`, `branch`, `runner-labels`, `php-version`, `node-version`, `run-tests`. No SSH secrets.
 
-**Pipeline**: Checkout → PHP/Composer → Node/npm → Build → Create artifact (tar.gz, excludes .git/node_modules/tests) → SCP to server → SSH exec `deploy.sh --artifact=...` → Cleanup.
+**Pipeline**: Checkout → PHP/Composer → Node/npm → Build → Create artifact (tar.gz, excludes .git/node_modules/tests) → `sudo /opt/forge-lite/deploy/deploy.sh <domain> --artifact=...` as `github-runner` (allowed only by `/etc/sudoers.d/github-runner`) → Cleanup. Workflows that SSH in as `deployer` and call `sudo` no longer work: `deployer` has no sudo rights (§9).
 
 ### Trigger Workflows
 
@@ -509,6 +510,7 @@ bash -c 'source lib/common.sh && source server/modules/<name>.sh && type provisi
 | Hardcode `/opt/forge-lite` | Use `FORGE_LITE_DIR` auto-resolution |
 | `echo` for user-facing output | `log_info`, `log_ok`, `log_warn`, `log_error` |
 | Per-site Linux users | Single `deployer` user for all sites |
+| sudo rules or admin groups for `deployer` | Run the step as root; drop privileges with `sudo -u deployer` |
 | Inline config generation | Template file + `render_template` |
 | `curl \| bash` for installs | Package manager (`apt`) or verified installer scripts |
 | Positional args for complex CLIs | `--flag=value` named argument parsing |

@@ -660,11 +660,21 @@ test_update_runs_scheduler_catch_up_migration() {
     legacy_path="$(get_legacy_scheduler_cron_path "${domain}" "${FORGE_LITE_CRON_DIR}")"
     printf 'ignored legacy scheduler\n' > "${legacy_path}"
 
-    # The repository CLI subprocess invokes this exported test double.
+    # The sudo catch-up must only touch a sandboxed sudoers tree.
+    rm -rf "${TEST_TMP}/sudoers.d"
+    mkdir -p "${TEST_TMP}/sudoers.d"
+    printf 'root ALL=(ALL:ALL) ALL\n@includedir %s/sudoers.d\n' "${TEST_TMP}" > "${TEST_TMP}/sudoers"
+
+    # The repository CLI subprocess invokes these exported test doubles.
     # shellcheck disable=SC2329
     install() { return 0; }
-    export -f install
+    # shellcheck disable=SC2329
+    gpasswd() { return 0; }
+    export -f install gpasswd
     if ! SITE_CONFIG_DIR="${SITE_CONFIG_DIR}" \
+        FORGE_LITE_SUDOERS_DIR="${TEST_TMP}/sudoers.d" \
+        FORGE_LITE_SUDOERS_FILE="${TEST_TMP}/sudoers" \
+        FORGE_LITE_BACKUP_DIR="${TEST_TMP}/backups" \
         FORGE_LITE_CRON_DIR="${FORGE_LITE_CRON_DIR}" \
         FORGE_LITE_LOCK_DIR="${FORGE_LITE_LOCK_DIR}" \
         FORGE_LITE_CRONTAB_SPOOL_DIR="${FORGE_LITE_CRONTAB_SPOOL_DIR}" \
@@ -672,16 +682,18 @@ test_update_runs_scheduler_catch_up_migration() {
         FORGE_LITE_FAIL2BAN_JAIL_TARGET="${TEST_TMP}/fail2ban/jail.d/99-forge-lite.local" \
         FORGE_LITE_SECURITY_LOG="${TEST_TMP}/logs/forge-lite-security.log" \
         bash -c 'source "$1"; cmd_update' _ "${PROJECT_ROOT}/cli/forge-lite"; then
-        export -n -f install
-        unset -f install
+        export -n -f install gpasswd
+        unset -f install gpasswd
         return 1
     fi
-    export -n -f install
-    unset -f install
+    export -n -f install gpasswd
+    unset -f install gpasswd
 
     assert_file_contains "${cron_path}" \
         "/home/deployer/sites/${domain}/current && php artisan schedule:run" || return 1
     assert_file_missing "${legacy_path}"
+    assert_file_contains "${TEST_TMP}/sudoers.d/deployer" \
+        'deployer intentionally has NO sudo rights'
 }
 
 test_readme_documents_upgrade_bootstrap_and_rollback_floor() {

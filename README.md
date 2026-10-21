@@ -23,6 +23,14 @@
 - Root access (or sudo)
 - SSH key-based access configured
 
+> **Administer as root, never as `deployer`.** Every PHP-FPM pool, queue
+> worker, Reverb/Horizon process and scheduler cron runs as `deployer`, so
+> `deployer` has **no sudo rights** — code execution in any hosted app must
+> not reach root. Log in as `root` (key-only) or as a separate admin account
+> with sudo. The `sudo` prefix in the examples below is a no-op for root.
+> Deploys and rollbacks switch from root to `deployer` themselves
+> (`sudo -u deployer`); the GitHub runner keeps its own narrow rule.
+
 ## Codex contributor setup
 
 Codex project configuration loads only after the repository is trusted. Review and trust the project hooks with `/hooks`, and repeat this after hook changes. Confirm the project-scoped Context7 server `deployment-context7` is available with `/mcp`.
@@ -301,7 +309,34 @@ sudo forge-lite update
 ```
 
 Catch-up migrations also repair managed server state from older forge-lite
-versions. The managed `/etc/logrotate.d/forge-lite` is re-synced with the
+versions. The first one revokes the passwordless sudo rule that older
+provisioning granted `deployer`: `/etc/sudoers.d/deployer` is replaced by a
+comment-only placeholder (checked with `visudo -c -f` before it is moved into
+place, the full configuration re-checked with `visudo -c` afterwards, previous
+file restored on failure) and `deployer` leaves the `sudo`/`admin` groups. The
+previous file is kept as `/var/backups/forge-lite/sudoers.d-deployer.pre-revoke`,
+the previous group list as `/var/backups/forge-lite/deployer-groups.pre-revoke`.
+`/etc/sudoers.d/github-runner` is not touched. Run this update as root, not
+through `deployer`'s own sudo (it refuses unless
+`FORGE_LITE_ALLOW_SELF_REVOKE=true`), and always with the freshly pulled
+`/opt/forge-lite/cli/forge-lite update` — the installed copy still runs the
+previous release's migrations. A failed revocation does not block the other
+catch-ups; the update reports it at the end and exits non-zero. Sudo rules for
+`deployer` in other sudoers files are reported as a warning, not edited.
+Verify with `sudo -l -U deployer` (expect "not allowed") and
+`sudo -u deployer sudo -n true` (expect failure). Already running FPM workers
+and Supervisor programs keep the old supplementary group until they respawn
+(password is locked, so it grants nothing); the next deploy restarts them.
+Emergency restore as root (the next `forge-lite update` revokes it again):
+
+```bash
+b=/var/backups/forge-lite/sudoers.d-deployer.pre-revoke
+visudo -c -f "$b" &&
+    install -m 440 "$b" /etc/sudoers.d/.deployer.restore &&
+    mv -f /etc/sudoers.d/.deployer.restore /etc/sudoers.d/deployer &&
+    visudo -c
+```
+The managed `/etc/logrotate.d/forge-lite` is re-synced with the
 current template (previous file kept as
 `/var/backups/forge-lite/forge-lite.pre-migration`); older templates
 rotated `laravel-*.log` and duplicated the nginx package's own logrotate entry.
@@ -385,7 +420,7 @@ sudo forge-lite site remove example.com --keep-db --keep-files
 
 | Component | Details |
 |-----------|---------|
-| **System** | deployer user, UTC timezone, en_US.UTF-8 locale, open file limits, journald capped (200M) |
+| **System** | deployer user (no sudo rights, not in `sudo`/`admin`), UTC timezone, en_US.UTF-8 locale, open file limits, journald capped (200M) |
 | **Swap** | Size based on RAM, sysctl tuning (`vm.swappiness=10`), OOM priorities |
 | **Security** | SSH hardening (key-only, `PermitRootLogin prohibit-password`, MaxAuthTries=3), UFW (22/80/443), Fail2Ban with a privacy-minimized scanner jail, unattended-upgrades |
 | **NGINX** | Mainline, DH params, gzip, rate limiting, privacy-minimized access logs, scanner probes rejected before PHP-FPM, security headers (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — re-asserted on static assets), CSP opt-in (Report-Only template) |

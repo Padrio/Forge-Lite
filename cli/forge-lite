@@ -555,6 +555,20 @@ _run_catch_up_migrations() {
         die "Scheduler migration helpers not found in ${FORGE_LITE_DIR}/lib"
 
     log_info "Applying catch-up migrations..."
+
+    # Older provisioning granted deployer passwordless sudo, which turns any
+    # PHP code execution into root. Runs first so a later failing migration
+    # cannot skip it; its own failure is reported at the end so the remaining
+    # repairs still apply.
+    local sudo_revoked=true
+    if declare -F revoke_deployer_sudo >/dev/null; then
+        # Default paths on purpose; the optional arguments exist for tests.
+        # shellcheck disable=SC2119
+        revoke_deployer_sudo || sudo_revoked=false
+    else
+        log_warn "revoke_deployer_sudo not found in ${FORGE_LITE_DIR}/lib; deployer sudo NOT revoked"
+    fi
+
     migrate_scheduler_crons "${SITE_CONFIG_DIR}" "${scheduler_template}" "${cron_dir}"
 
     # Older templates rotated laravel-*.log (leaving .log.1 orphans) and
@@ -582,6 +596,9 @@ _run_catch_up_migrations() {
     if declare -F repair_storage_permissions >/dev/null; then
         repair_storage_permissions
     fi
+
+    [[ "${sudo_revoked}" == true ]] ||
+        die "Revoking deployer sudo failed (see errors above); fix them and re-run 'forge-lite update'"
 }
 
 cmd_update() {

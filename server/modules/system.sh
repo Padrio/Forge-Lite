@@ -24,25 +24,22 @@ provision_system() {
         acl \
         ufw \
         cron \
-        logrotate
+        logrotate \
+        sudo
 
     # Create deployer user
     ensure_user deployer /bin/bash /home/deployer
 
-    # Add deployer to sudo + www-data groups
-    usermod -aG sudo deployer 2>/dev/null || true
+    # Add deployer to the www-data group (never sudo/admin — see below)
     usermod -aG www-data deployer 2>/dev/null || true
 
     # Make home directory traversable by www-data (nginx)
     # 711 = owner rwx, group --x, others --x (traverse only, no listing)
     chmod 711 /home/deployer
 
-    # Passwordless sudo for deployer
-    if [[ ! -f /etc/sudoers.d/deployer ]]; then
-        echo "deployer ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/deployer
-        chmod 440 /etc/sudoers.d/deployer
-        log_info "Configured passwordless sudo for deployer"
-    fi
+    # deployer runs every PHP-FPM pool, worker and scheduler cron, so it gets
+    # no sudo rights. Same helper as the `forge-lite update` catch-up.
+    revoke_deployer_sudo
 
     # Create sites directory
     mkdir -p /home/deployer/sites
