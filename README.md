@@ -424,7 +424,7 @@ sudo forge-lite site remove example.com --keep-db --keep-files
 | **Swap** | Size based on RAM, sysctl tuning (`vm.swappiness=10`), OOM priorities |
 | **Security** | SSH hardening (key-only, `PermitRootLogin prohibit-password`, MaxAuthTries=3), UFW (22/80/443), Fail2Ban with a privacy-minimized scanner jail, unattended-upgrades |
 | **NGINX** | Mainline, DH params, gzip, rate limiting, privacy-minimized access logs, scanner probes rejected before PHP-FPM, security headers (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — re-asserted on static assets), CSP opt-in (Report-Only template) |
-| **PHP** | 8.2, 8.3, 8.4 with FPM + Laravel extensions + OPcache/JIT (8.1 is EOL, opt-in via `provision --php-versions=`). Only the **default** version's FPM is started; other versions install stopped+disabled and are enabled on demand when a site uses them. |
+| **PHP** | 8.2, 8.3, 8.4 with FPM + Laravel extensions + OPcache/JIT, `session.upload_progress` disabled (8.1 is EOL, opt-in via `provision --php-versions=`). Only the **default** version's FPM is started; other versions install stopped+disabled and are enabled on demand when a site uses them. |
 | **Composer** | Global install with weekly auto-update |
 | **MariaDB** | Secured, InnoDB tuned (buffer pool 20% RAM capped 1024M, full durability `flush_log=1`; override via `--db-buffer-pool=` / `--db-flush-log=`), forge-lite admin user |
 | **Redis** | Password-protected, AOF, maxmemory (25% RAM), `volatile-lru` (evicts only TTL keys — protects queue/Horizon jobs) |
