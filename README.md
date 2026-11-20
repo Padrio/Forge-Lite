@@ -349,7 +349,13 @@ quiet expected missing-asset errors, and send hidden-file/PHP probes to the
 minimal `/var/log/nginx/forge-lite-security.log`. The regular access logs stay
 privacy-minimized; a dedicated `nginx-scanner` Fail2Ban jail consumes only the
 security log. Changed NGINX files keep `.pre-scanner-hardening` backups and are
-restored automatically if validation or reload fails. Shared Laravel storage
+restored automatically if validation or reload fails. The managed catch-all
+server is synchronized from its template (backup `.pre-catchall-hardening`):
+requests without a configured host name are logged to
+`/var/log/nginx/forge-lite-catchall.log` (except `/health`) and banned by the
+`nginx-catchall` jail after 3 hits in 10 minutes; on port 443 a default server
+with `ssl_reject_handshake on` rejects direct-IP and unknown-SNI handshakes so
+they no longer fall through to the first site. Shared Laravel storage
 directories are normalized to `deployer:deployer` mode `0775`, removing legacy
 world-write permissions.
 In particular, Laravel scheduler files are migrated from the legacy

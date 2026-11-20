@@ -238,3 +238,39 @@ migrate_nginx_scanner_handling() {
         log_info "Hardened scanner handling in ${vhost} (backup: ${vhost}.pre-scanner-hardening)"
     done
 }
+
+# migrate_nginx_catch_all [template] [target] [nginx_conf]
+# Syncs the managed catch-all server from its template (security log for the
+# nginx-catchall jail, TLS default that rejects unknown SNI).
+migrate_nginx_catch_all() {
+    local template="${1:-${FORGE_LITE_DIR}/server/config/templates/nginx/catch-all.conf}"
+    local target="${2:-${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}/catch-all.conf}"
+    local nginx_conf="${3:-/etc/nginx/nginx.conf}"
+    local backup="${target}.pre-catchall-hardening"
+
+    [[ -f "${template}" && -f "${target}" ]] || return 0
+    cmp -s "${template}" "${target}" && return 0
+    if ! grep -qE '^[[:space:]]*log_format[[:space:]]+forge_lite_security[[:space:]]' "${nginx_conf}"; then
+        log_error "forge_lite_security log format missing in ${nginx_conf}; catch-all not migrated"
+        return 1
+    fi
+
+    cp -a "${target}" "${backup}" || return 1
+    install -m 644 "${template}" "${target}" || { mv -f "${backup}" "${target}"; return 1; }
+
+    if command -v nginx >/dev/null 2>&1 && ! nginx -t >/dev/null 2>&1; then
+        log_error "nginx validation failed after catch-all migration; restoring ${target}"
+        mv -f "${backup}" "${target}" || true
+        return 1
+    fi
+
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nginx; then
+        if ! systemctl reload nginx; then
+            log_error "nginx reload failed; restoring ${target}"
+            mv -f "${backup}" "${target}" || true
+            nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
+            return 1
+        fi
+    fi
+    log_info "Synchronized catch-all server (backup: ${backup})"
+}

@@ -106,9 +106,22 @@ test_fail2ban_templates_match_minimal_log() {
     grep -qF '<HOST>' "${filter}"
 }
 
+test_catch_all_feeds_jail_and_rejects_unknown_sni() {
+    local catch_all="${PROJECT_ROOT}/server/config/templates/nginx/catch-all.conf"
+    local filter="${PROJECT_ROOT}/server/config/templates/fail2ban/nginx-catchall.conf"
+    local jail="${PROJECT_ROOT}/server/config/templates/fail2ban/forge-lite.local"
+    grep -qF 'access_log /var/log/nginx/forge-lite-catchall.log forge_lite_security;' "${catch_all}" || return 1
+    grep -qF 'listen 443 ssl default_server;' "${catch_all}" || return 1
+    grep -qF 'ssl_reject_handshake on;' "${catch_all}" || return 1
+    grep -qF '[nginx-catchall]' "${jail}" || return 1
+    grep -qF 'logpath = /var/log/nginx/forge-lite-catchall.log' "${jail}" || return 1
+    grep -qF '<HOST>' "${filter}"
+}
+
 test_update_runs_all_catch_up_helpers() {
     local cli="${PROJECT_ROOT}/cli/forge-lite"
     grep -qF 'migrate_nginx_scanner_handling' "${cli}" || return 1
+    grep -qF 'migrate_nginx_catch_all' "${cli}" || return 1
     grep -qF 'ensure_fail2ban_scanner_config' "${cli}" || return 1
     grep -qF 'repair_storage_permissions' "${cli}"
 }
@@ -117,6 +130,7 @@ run_test "templates use quiet scanner handling" test_templates_have_quiet_scanne
 run_test "legacy vhost migration is targeted and idempotent" test_legacy_vhost_migration_is_targeted_and_idempotent
 run_test "security log format migration is idempotent" test_log_format_migration_is_idempotent
 run_test "Fail2Ban consumes the minimal security log" test_fail2ban_templates_match_minimal_log
+run_test "catch-all feeds its jail and rejects unknown SNI" test_catch_all_feeds_jail_and_rejects_unknown_sni
 run_test "forge-lite update runs every catch-up helper" test_update_runs_all_catch_up_helpers
 
 if [[ "${TESTS_FAILED}" -ne 0 ]]; then

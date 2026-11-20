@@ -23,3 +23,17 @@ bantime.increment = true
 bantime.factor = 2
 bantime.rndtime = 5m
 bantime.maxtime = 1w
+
+[nginx-catchall]
+enabled = true
+port = http,https
+filter = nginx-catchall
+logpath = /var/log/nginx/forge-lite-catchall.log
+backend = auto
+maxretry = 3
+findtime = 10m
+bantime = 1h
+bantime.increment = true
+bantime.factor = 2
+bantime.rndtime = 5m
+bantime.maxtime = 1w
